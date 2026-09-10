@@ -1,0 +1,215 @@
+.import-banner{
+  background:#eaf0e3;
+  border:1px solid #dae4ce;
+  border-radius:12px;
+  padding:19px 23px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:20px}
+  .import-banner strong{
+    font-size:13px}
+    .import-banner p{
+      font-size:11px;
+      color:#7c8a71;
+      margin:4px 0 0}
+      .two-columns{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:20px;
+        align-items:start}
+        label{
+          display:block;
+          font-size:11px;
+          font-weight:550;
+          color:#53604c;
+          margin-top:15px}
+          input,select,textarea{
+            display:block;
+            width:100%;
+            margin-top:7px;
+            border:1px solid #dce2d6;
+            background:#fdfefa;
+            border-radius:7px;
+            padding:10px 12px;
+            color:#394b32;
+            min-width:0;
+            font-size:12px}
+            input::placeholder,textarea::placeholder{
+              color:#a1ac96}
+              textarea{
+                resize:vertical;
+                line-height:1.7}
+                label small{
+                  display:block;
+                  font-size:10px;
+                  font-weight:400;
+                  color:#919c87;
+                  margin-top:6px}
+                  label.checkbox{
+                    display:flex;
+                    align-items:center;
+                    gap:8px;
+                    color:#7a866e;
+                    font-weight:400}
+                    .checkbox input{
+                      width:14px;
+                      height:14px;
+                      margin:0;
+                      accent-color:#4e7444}
+                      .form-grid{
+                        display:grid;
+                        grid-template-columns:1fr 1fr;
+                        gap:0 15px}
+                        .hint{
+                          font-size:10px;
+                          color:#8c9981;
+                          margin:10px 0 0}
+                          .divider{
+                            height:1px;
+                            background:#e8ecdf;
+                            margin:24px 0}
+                            .path-label{
+                              font-family:"SFMono-Regular",Consolas,monospace;
+                              font-size:10px;
+                              color:#7b8870;
+                              overflow-wrap:anywhere;
+                              background:#f4f6ef;
+                              padding:8px 10px;
+                              border-radius:6px}
+                              .tip{
+                                border-left:2px solid #b8cda4;
+                                background:#f3f6ed;
+                                padding:12px 14px;
+                                margin:20px 0}
+                                .tip strong{
+                                  font-size:11px;
+                                  font-weight:550}
+                                  .tip p{
+                                    font-size:10px;
+                                    line-height:1.8;
+                                    color:#859276;
+                                    margin:4px 0 0}
+                                    .advanced-card>button{
+                                      margin-top:22px}
+                                      .search-row{
+                                        display:flex;
+                                        gap:8px;
+                                        margin-top:20px}
+                                        .search-row input{
+                                          margin:0}
+                                          .thread-list{
+                                            margin-top:15px;
+                                            display:grid;
+                                            gap:7px;
+                                            max-height:290px;
+                                            overflow:auto}
+                                            .thread-option{
+                                              border:1px solid #e2e8db;
+                                              background:#fafcf6;
+                                              padding:10px;
+                                              text-align:left;
+                                              border-radius:7px;
+                                              min-width:0}
+                                              .thread-option strong,.thread-option small{
+                                                display:block;
+                                                overflow-wrap:anywhere}
+                                                .thread-option strong{
+                                                  font-size:11px;
+                                                  font-weight:550}
+                                                  .thread-option small{
+                                                    font-size:9px;
+                                                    color:#909d84}
+                                                    .thread-option.selected{
+                                                      border-color:#8daa7a;
+                                                      background:#edf4e5}
+                                                      .empty-text{
+                                                        color:#a1ac97;
+                                                        font-size:11px;
+                                                        margin:16px 0}
+                                                        .rules-card textarea{
+                                                          height:470px;
+                                                          min-height:300px;
+                                                          resize:vertical;
+                                                          font-family:"SFMono-Regular","PingFang SC",monospace;
+                                                          font-size:12px;
+                                                          line-height:1.9;
+                                                          padding:20px}
+                                                          .help-card{
+                                                            max-width:850px}
+                                                            .help-card h2{
+                                                              font-size:24px;
+                                                              margin-top:10px}
+                                                              .help-card p{
+                                                                font-size:12px;
+                                                                color:#7b8a70}
+                                                                .help-steps{
+                                                                  margin:25px 0;
+                                                                  padding-left:22px;
+                                                                  display:grid;
+                                                                  gap:18px}
+                                                                  .help-steps li::marker{
+                                                                    color:#a4b193}
+                                                                    .help-steps strong{
+                                                                      font-size:14px}
+                                                                      .help-steps p{
+                                                                        margin:4px 0}
+                                                                        code{
+                                                                          background:#edf2e7;
+                                                                          padding:2px 5px;
+                                                                          border-radius:4px;
+                                                                          color:#587348}
+                                                                          .sr-only{
+                                                                            position:absolute;
+                                                                            width:1px;
+                                                                            height:1px;
+                                                                            overflow:hidden;
+                                                                            clip:rect(0,0,0,0)}
+                                                                            #toast{
+                                                                              position:fixed;
+                                                                              bottom:26px;
+                                                                              left:calc(50% + 100px);
+                                                                              transform:translateX(-50%);
+                                                                              max-width:600px;
+                                                                              padding:13px 22px;
+                                                                              background:#294432;
+                                                                              color:#edf3e7;
+                                                                              border-radius:9px;
+                                                                              font-size:12px;
+                                                                              box-shadow:0 5px 30px #23362022;
+                                                                              z-index:5}
+                                                                              #toast.error{
+                                                                                background:#80533e}
+                                                                                .is-dirty::after{
+                                                                                  content:" · 未保存";
+                                                                                  color:#9b7940;
+                                                                                  font-size:10px}
+                                                                                  @media(max-width:1120px){
+                                                                                    main{
+                                                                                      padding-left:25px;
+                                                                                      padding-right:25px}
+                                                                                      .sidebar{
+                                                                                        width:205px;
+                                                                                        padding-left:18px;
+                                                                                        padding-right:18px}
+                                                                                        main{
+                                                                                          margin-left:205px}
+                                                                                          .control-strip{
+                                                                                            align-items:flex-start}
+                                                                                            .control-actions{
+                                                                                              flex-wrap:wrap;
+                                                                                              justify-content:flex-end}
+                                                                                              .connector{
+                                                                                                margin-right:12px}
+                                                                                                .card{
+                                                                                                  padding:20px}
+                                                                                                  .overview-grid{
+                                                                                                    grid-template-columns:1.3fr 1fr}
+                                                                                                    .form-grid{
+                                                                                                      grid-template-columns:1fr}
+                                                                                                    }
+                                                                                                    @media(prefers-reduced-motion:reduce){
+                                                                                                      *{
+                                                                                                        animation:none!important;
+                                                                                                        transition:none!important}
+                                                                                                      }

@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+data/*
+!data/.gitkeep
+coverage/
+*.log
+.DS_Store
+.idea/
+/dist/
+/build/
+/test-results/

@@ -1,0 +1,25 @@
+{
+  "appId": "local.familiar.agent-bridge",
+  "productName": "Familiar Agent Bridge",
+  "directories": { "output": "dist", "buildResources": "build" },
+  "asar": true,
+  "electronDist": "node_modules/electron/dist",
+  "files": [
+    "desktop/main/**/*.mjs", "desktop/preload.cjs", "desktop/renderer/**/*",
+    "src/**/*.mjs", "foundry-module/shared/protocol.mjs", "package.json"
+  ],
+  "extraResources": [
+    { "from": "build/bridge-resources", "to": "bridge-resources", "filter": ["**/*", "!**/.DS_Store"] }
+  ],
+  "mac": {
+    "category": "public.app-category.games",
+    "icon": "build/icon.png",
+    "identity": "-",
+    "hardenedRuntime": false,
+    "target": ["dmg", "zip"]
+  },
+  "dmg": { "title": "Familiar Agent Bridge" },
+  "artifactName": "Familiar-Agent-Bridge-${version}-${arch}.${ext}",
+  "npmRebuild": false,
+  "publish": null
+}

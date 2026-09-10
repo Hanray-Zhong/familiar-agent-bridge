@@ -1,0 +1,5 @@
+.familiar-bridge-settings .standard-form { display: grid; gap: 0.8rem; padding: 1rem; }
+.familiar-bridge-settings label { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.familiar-bridge-settings p { margin: 0; overflow-wrap: anywhere; }
+.familiar-bridge-settings input[type="file"] { width: 100%; }
+.familiar-bridge-settings .form-footer { display: flex; flex-wrap: wrap; gap: 0.5rem; }

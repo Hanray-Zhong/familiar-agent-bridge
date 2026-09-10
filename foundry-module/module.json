@@ -1,0 +1,11 @@
+{
+  "id": "familiar-codex-bridge",
+  "title": "Familiar Agent Bridge",
+  "description": "将玩家 @familiar 消息通过指定 GM 客户端推送到本机 Codex Bridge。",
+  "version": "0.2.0",
+  "authors": [{ "name": "Familiar Agent Bridge" }],
+  "compatibility": { "minimum": "14", "verified": "14.367", "maximum": "14" },
+  "relationships": { "requires": [{ "id": "familiar", "type": "module" }] },
+  "esmodules": ["main.mjs"],
+  "styles": ["styles/settings.css"]
+}
