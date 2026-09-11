@@ -8,6 +8,7 @@ import { normalizeEvent } from '../event-source/base.mjs';
 import { acquireLock } from '../storage/instance-lock.mjs';
 import { threadOptions } from '../codex/policy.mjs';
 import { checkFamiliar, guardGameItem, verifyAgent } from './familiar-health.mjs';
+import { createResponseCollector } from './responses/collector.mjs';
 
 export class Bridge extends EventEmitter {
   constructor(config, logger, { codex, store, health = checkFamiliar } = {}) {
@@ -171,13 +172,17 @@ export class Bridge extends EventEmitter {
     try { await this.store.begin(event.id); }
     catch (error) { this.fatal(error); throw error; }
     try {
+      const collectResponse = createResponseCollector({ event, threadId: this.threadId, familiarServer: this.config.familiarServer },
+        response => this.emit('response', response));
       const result = await this.codex.runTurn(this.threadId, buildPlayerTurnPrompt(event), {
         timeoutMs: this.config.turnTimeoutMs, eventId: event.id,
         onItem: (item, method) => {
           try { guardGameItem(this.codex, item, method); }
           catch (error) { this.pause(error.message, error.code === 'SECURITY_VIOLATION'); throw error; }
+          collectResponse(item, method);
         },
       });
+      for (const item of result.items) collectResponse(item);
       const calls = result.items.filter(item => item.type === 'mcpToolCall' && item.server === this.config.familiarServer && item.status === 'completed');
       if (!calls.some(item => item.tool.replaceAll('_', '-') === 'get-world-info') ||
           !calls.some(item => item.tool.replaceAll('_', '-') === 'send-chat-message')) {

@@ -49,6 +49,38 @@ export function fillPairing(pairing) {
   $('origins').value = pairing.allowedOrigins.join('\n');
 }
 
+export function scrollLogsToBottom(ids = ['logs', 'ai-responses']) {
+  for (const id of ids) {
+    const panel = $(id);
+    if (!panel.hidden) panel.scrollTop = panel.scrollHeight;
+  }
+}
+
+export function selectLogTab(panelId) {
+  if (!['logs', 'ai-responses'].includes(panelId)) return;
+  for (const [id, panel] of [['system-log-tab', 'logs'], ['ai-log-tab', 'ai-responses']]) {
+    const selected = panel === panelId;
+    $(id).setAttribute('aria-selected', String(selected));
+    $(id).tabIndex = selected ? 0 : -1;
+    $(panel).hidden = !selected;
+  }
+  scrollLogsToBottom();
+}
+
+function renderLogText(id, content) {
+  if ($(id).textContent === content) return;
+  text(id, content);
+  scrollLogsToBottom([id]);
+}
+
+function renderLogs(lines, responses) {
+  renderLogText('logs', lines.length ? lines.map(line => line.text).join('\n') : '启动或检查连接后，日志会显示在这里。');
+  renderLogText('ai-responses', responses.length ? responses.map(response => {
+    const source = response.source === 'foundry' ? 'Foundry 聊天' : 'Codex 回答';
+    return `${response.timestamp} · ${response.player} · ${source}\n${response.text}`;
+  }).join('\n\n──────────\n\n') : '处理玩家请求后，AI 的实际回答会显示在这里。');
+}
+
 export function render(state) {
   const { status, profile, busy, environment, pairing } = state;
   const phase = status.phase || 'stopped', active = phase !== 'stopped';
@@ -77,7 +109,7 @@ export function render(state) {
   text('module-path', state.modulePackage?.path || '选择保存位置后生成 ZIP 安装包');
   text('help-data-path', `应用设置：${profile.directory}\n跑团数据：${state.paths?.state || profile.root}`);
   text('rules-path', state.paths?.rules || profile.values.DM_INSTRUCTIONS_FILE);
-  text('logs', state.logs.length ? state.logs.map(line => line.text).join('\n') : '启动或检查连接后，日志会显示在这里。');
+  renderLogs(state.logs, state.aiResponses ?? []);
   $('start').disabled = active || Boolean(busy);
   $('stop').disabled = !active || phase === 'stopping';
   $('recover').disabled = phase !== 'paused' || Boolean(busy);

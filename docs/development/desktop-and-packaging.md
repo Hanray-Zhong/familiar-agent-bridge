@@ -12,6 +12,16 @@
 
 旧版数据接管是保留的兼容入口：只在用户选择旧项目时读取其 `.env`，复用状态与锁，不复制配对密钥。正常启动仅加载桌面 `settings.json`，不自动读取 `.env` 或进程中的 Bridge 配置。旧 `STDIN_PLAYER` 自动映射到 `TEST_PLAYER`，下次保存才更新磁盘。关闭应用时等待 Bridge 与所有子进程退出；最小化保持运行。
 
+## 运行日志与 AI 回答
+
+运行日志提供“系统日志”和“AI 回答”两个标签页，默认显示系统日志。标签支持点击、左右方向键和 Home / End；状态刷新保留当前选择。当前页内容变化后自动滚动到底部，展开日志、切换标签或切回控制台时也定位最新记录。另一页的更新和无新内容的状态刷新不改变当前阅读位置。只滚动日志区域，不移动整个页面。
+
+系统日志保留原有级别过滤和最近 300 条上限。AI 回答通过 `src/runtime/responses/collector.mjs` 从玩家 Turn 的完整 Item 收集：`agentMessage` 的最终回答，以及 Familiar `send-chat-message` 成功回执对应的 `arguments.content`。未标记阶段的旧模型文本兼容展示；思考过程、进度说明、健康检查和失败的聊天发送不进入回答页。Item 通知和 Turn 汇总按 Item ID 去重；后续 Turn 失败不抹掉已收到的回答，也不改变原来的 `uncertain` 判定。
+
+Bridge 的 `response` 事件经 DesktopSession 回调进入 DesktopController 的独立 `aiResponses` 缓冲，随已有 `snapshot` IPC 返回。最近 100 条回答保留来源、玩家、请求和 Thread ID；正文脱敏并保留换行，超过 64000 字符时明确标记截断。回答不受 `LOG_LEVEL` 过滤，只保存在本次应用内存中，停止 Bridge 后仍可查看。renderer 使用 `textContent` 显示正文，HTML 和 Markdown 均作为文本展示。
+
+`test/desktop-log-scroll.test.mjs` 覆盖双标签选择、独立刷新、滚动和键盘操作。`test/response-collector.test.mjs`、Bridge 与桌面会话 / 控制器测试覆盖回答来源、去重、脱敏、失败保留、级别隔离和容量。演示预览的手工请求会生成明确标注“演示”的两种回答，不能作为真实游戏验证。
+
 ## Foundry ZIP
 
 `src/foundry/module-package.mjs` 从 `module.json` 的入口收集静态相对依赖，打包为带 `familiar-codex-bridge/` 顶层目录的 ZIP。版本来自模块清单。新增资源类型或动态加载文件时，要扩展收集逻辑并增加解压测试，不能直接扫描整个项目打包。

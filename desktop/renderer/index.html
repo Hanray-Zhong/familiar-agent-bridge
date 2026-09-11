@@ -39,7 +39,15 @@
         <article class="card setup-card"><span class="eyebrow">BEFORE THE ADVENTURE</span><h2>开始前的准备</h2><ol class="checklist"><li><span id="check-cli">1</span><div><strong>关联 Codex</strong><p>沿用已登录的 CLI 和 Familiar。</p></div></li><li><span id="check-pair">2</span><div><strong>连接 Foundry 世界</strong><p>指定负责推送消息的 GM。</p></div></li><li><span>3</span><div><strong>在 Foundry 启用模块</strong><p>导入配对文件，开启玩家消息推送。</p></div></li></ol><button class="button full" data-page="connection">打开连接设置 →</button><button id="doctor" class="text-button full">只读检查完整链路</button></article>
       </div>
       <article class="card request-card"><div><h2>发起一个测试请求</h2><p class="muted">启动后可直接输入；执行结果会由 Familiar 发送到 Foundry Chat。</p></div><form id="message-form"><label class="sr-only" for="message">玩家请求</label><input id="message" maxlength="16000" placeholder="例如：我环顾当前场景。" autocomplete="off"><button class="button primary" id="send" disabled>发送请求 ↗</button></form></article>
-      <details class="card log-card"><summary>诊断日志 <span class="muted">仅保留本次运行的最近 300 条</span></summary><pre id="logs" aria-live="off">启动或检查连接后，日志会显示在这里。</pre></details>
+      <details class="card log-card">
+        <summary>运行日志 <span class="muted">仅保留本次运行的记录</span></summary>
+        <div class="log-tabs" role="tablist" aria-label="日志类型">
+          <button type="button" id="system-log-tab" role="tab" data-log-tab="logs" aria-controls="logs" aria-selected="true">系统日志</button>
+          <button type="button" id="ai-log-tab" role="tab" data-log-tab="ai-responses" aria-controls="ai-responses" aria-selected="false" tabindex="-1">AI 回答</button>
+        </div>
+        <pre id="logs" role="tabpanel" aria-labelledby="system-log-tab" tabindex="0" aria-live="off">启动或检查连接后，日志会显示在这里。</pre>
+        <pre id="ai-responses" class="ai-responses" role="tabpanel" aria-labelledby="ai-log-tab" tabindex="0" aria-live="off" hidden>处理玩家请求后，AI 的实际回答会显示在这里。</pre>
+      </details>
     </section>
 
     <section id="page-connection" class="page" hidden>

@@ -3,8 +3,8 @@ import { FoundryEventSource } from '../../src/event-source/foundry.mjs';
 import { loadPairing } from '../../src/foundry/pairing.mjs';
 
 export class DesktopSession {
-  constructor(config, logger, changed, { BridgeClass = Bridge, SourceClass = FoundryEventSource, readPairing = loadPairing } = {}) {
-    Object.assign(this, { config, logger, changed, BridgeClass, SourceClass, readPairing });
+  constructor(config, logger, changed, { BridgeClass = Bridge, SourceClass = FoundryEventSource, readPairing = loadPairing, onResponse = () => {} } = {}) {
+    Object.assign(this, { config, logger, changed, BridgeClass, SourceClass, readPairing, onResponse });
     this.phase = 'stopped';
   }
 
@@ -18,6 +18,7 @@ export class DesktopSession {
         const pairing = mode === 'foundry' ? await this.readPairing(this.config.foundryPairingFile) : null;
         const config = { ...this.config, ...(pairing ? { expectedWorldId: pairing.worldId } : {}), ...(inspectionOnly ? { readOnlyProbe: true } : {}) };
         this.bridge = new this.BridgeClass(config, this.logger);
+        this.bridge.on('response', this.onResponse);
         this.bridge.on('ready', () => { if (!inspectionOnly && this.activated && !this.stopRequested) this.phase = 'running'; this.changed(); });
         this.bridge.on('paused', () => { if (this.activated && !this.stopRequested) this.phase = 'paused'; this.changed(); });
         // 先挂接并检查，端口监听完成后才允许旧待办执行。停止请求不会启动队列。

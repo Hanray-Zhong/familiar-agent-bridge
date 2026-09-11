@@ -17,7 +17,7 @@ import { DesktopSession } from './session.mjs';
 export class DesktopController extends EventEmitter {
   constructor(profile, { SessionClass = DesktopSession, ClientClass = CodexAppServer } = {}) {
     super(); Object.assign(this, { profile, SessionClass, ClientClass });
-    this.logs = []; this.models = []; this.threads = []; this.environment = null;
+    this.logs = []; this.aiResponses = []; this.models = []; this.threads = []; this.environment = null;
   }
 
   notify() { this.emit('change'); }
@@ -26,6 +26,12 @@ export class DesktopController extends EventEmitter {
       this.logs.push({ id: randomUUID(), text: line.trim().slice(0, 6000) });
       this.logs = this.logs.slice(-300); this.notify();
     } } });
+  }
+
+  recordResponse(response) {
+    this.aiResponses.push(response);
+    this.aiResponses = this.aiResponses.slice(-100);
+    this.notify();
   }
 
   async snapshot() {
@@ -43,7 +49,7 @@ export class DesktopController extends EventEmitter {
       } catch (error) { if (error.code !== 'ENOENT') notice = '会话状态文件无法读取，请保留原文件并检查'; }
     } catch (error) { notice = redact(error.message); }
     return { profile, paths, pairing, notice, modulePackage: this.modulePackage || null, status: { ...stored, phase: 'stopped', ...this.session?.status() },
-      busy: this.busy || null, environment: this.environment, models: this.models, threads: this.threads, logs: this.logs };
+      busy: this.busy || null, environment: this.environment, models: this.models, threads: this.threads, logs: this.logs, aiResponses: this.aiResponses };
   }
 
   idle() {
@@ -130,7 +136,7 @@ export class DesktopController extends EventEmitter {
     if (!['foundry', 'manual'].includes(mode)) throw new Error('不支持的启动方式');
     return this.run('启动 Bridge', async () => {
       this.idle(); const config = await this.config();
-      this.session = new this.SessionClass(config, this.logger(config.logLevel), () => this.notify());
+      this.session = new this.SessionClass(config, this.logger(config.logLevel), () => this.notify(), { onResponse: response => this.recordResponse(response) });
       await this.session.start({ mode });
     });
   }
@@ -144,7 +150,7 @@ export class DesktopController extends EventEmitter {
     let paired = false;
     try { await loadPairing(config.foundryPairingFile); paired = true; }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    this.session = new this.SessionClass(config, this.logger(config.logLevel), () => this.notify());
+    this.session = new this.SessionClass(config, this.logger(config.logLevel), () => this.notify(), { onResponse: response => this.recordResponse(response) });
     try {
       await this.session.start({ mode: paired ? 'foundry' : 'manual', inspectionOnly: true });
       if (this.session.stopRequested || this.closing) return;

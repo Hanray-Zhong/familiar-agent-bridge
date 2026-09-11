@@ -47,6 +47,23 @@ test('桌面先完成监听再处理已保存的队列，所有 Turn 仍串行',
   await f.session.stop(); assert.equal(f.codex.child, null); assert.equal(f.session.phase, 'stopped');
 });
 
+test('桌面会话转发真实 Bridge 的回答事件，兼容只在 Turn 汇总中出现的回答', async t => {
+  const { session, codex } = await fixture(t);
+  const responses = [];
+  session.onResponse = response => responses.push(response);
+  const original = codex.runTurn;
+  codex.runTurn = async (...args) => {
+    const result = await original(...args);
+    result.items.push({ type: 'agentMessage', id: 'answer', phase: 'final_answer', text: '来自实际结果集合的回答' });
+    return result;
+  };
+  await session.start({ mode: 'manual' });
+  await session.bridge.accept(event('reply')); await session.bridge.drain();
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].eventId, 'reply');
+  assert.equal(responses[0].text, '来自实际结果集合的回答');
+});
+
 test('连接尚未完成就停止时不消费旧消息、不启动监听，保留待办', async t => {
   const f = await fixture(t), store = new ThreadStore(f.config.stateFile);
   await store.load(); await store.enqueue(event('A'));

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Bridge } from '../src/runtime/bridge.mjs';
 import { FamiliarUnavailable } from '../src/runtime/familiar-health.mjs';
+import { runTurn } from '../src/codex/turn-runner.mjs';
 
 class FakeCodex extends EventEmitter {
   familiarServer = 'familiar';
@@ -54,6 +55,48 @@ async function setup(t, overrides = {}) {
 }
 
 const event = id => ({ id, player: 'Alice', text: '只读测试', type: 'player-message', timestamp: new Date().toISOString(), metadata: {} });
+
+test('玩家 Turn 的真实回答发布到桌面事件，忽略旧回合并合并逐项通知与完成汇总', async t => {
+  const { bridge, codex } = await setup(t);
+  const responses = [];
+  bridge.on('response', response => responses.push(response));
+  await bridge.start();
+  const chat = { type: 'mcpToolCall', id: 'chat', server: 'familiar', tool: 'send-chat-message', status: 'completed',
+    arguments: { content: '你听见门外有脚步声。\n你打算怎么做？' }, result: { structuredContent: { success: true } } };
+  const answer = { type: 'agentMessage', id: 'answer', phase: 'final_answer', text: '已完成观察，等待玩家行动。' };
+  const world = { ...chat, id: 'world', tool: 'get-world-info', arguments: {} };
+  codex.runTurn = (...args) => runTurn(codex, ...args);
+  codex.requestTimeoutMs = 100;
+  codex.request = async () => {
+    const emit = (method, params) => codex.emit('notification', { method, params: { threadId: bridge.threadId, ...params } });
+    emit('item/completed', { turnId: 'old-turn', item: { ...answer, id: 'old', text: '旧回答' } });
+    emit('item/completed', { threadId: 'other-thread', turnId: 'turn', item: { ...answer, id: 'other', text: '其他对话' } });
+    for (const item of [world, chat, answer]) emit('item/completed', { turnId: 'turn', item });
+    emit('item/completed', { turnId: 'turn', item: answer });
+    emit('turn/completed', { turn: { id: 'turn', status: 'completed', items: [chat, answer] } });
+    return { turn: { id: 'turn' } };
+  };
+  await bridge.accept(event('A')); await bridge.drain();
+  assert.deepEqual(responses.map(response => [response.source, response.text]), [['foundry', chat.arguments.content], ['codex', answer.text]]);
+  assert.ok(responses.every(response => response.eventId === 'A' && response.threadId === bridge.threadId && response.player === 'Alice'));
+  assert.equal(bridge.store.snapshot().receipts[0].status, 'processed');
+});
+
+test('Turn 后续失败仍保留已经收到的完整回答，回答事件不将失败请求标为完成', async t => {
+  const { bridge, codex } = await setup(t);
+  const responses = [];
+  bridge.on('response', response => responses.push(response));
+  await bridge.start();
+  codex.runTurn = async (_thread, _prompt, { onItem }) => {
+    onItem({ type: 'agentMessage', id: 'answer', phase: 'final_answer', text: '已经读到的回答' }, 'item/completed');
+    throw new Error('后续回合失败');
+  };
+  await bridge.accept(event('A')); await bridge.drain();
+  assert.equal(responses[0].text, '已经读到的回答');
+  assert.equal(bridge.store.snapshot().receipts[0].status, 'uncertain');
+  assert.equal((await bridge.accept(event('A'))).accepted, false);
+  assert.equal(responses.length, 1);
+});
 
 test('完整 Bridge 串行执行、单条失败继续、持久化成功与失败 ID 去重', async t => {
   const { bridge, codex } = await setup(t);

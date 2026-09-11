@@ -16,6 +16,29 @@ async function fixture(t, options) {
   return { controller, profile, config: await profile.config() };
 }
 
+test('桌面回答独立于系统日志级别并限制最近 100 条，停止后仍可查阅', async t => {
+  class Session {
+    constructor(_config, _logger, _changed, { onResponse }) { this.onResponse = onResponse; }
+    async start() { this.phase = 'running'; }
+    async stop() { this.phase = 'stopped'; }
+    status() { return { phase: this.phase }; }
+  }
+  const { controller, profile } = await fixture(t, { SessionClass: Session });
+  await profile.save({ ...profile.data.values, LOG_LEVEL: 'error' });
+  await controller.start('manual');
+  let changes = 0; controller.on('change', () => { changes++; });
+  controller.logger('error').info('turn', '低级别系统日志');
+  for (let i = 0; i < 105; i++) controller.session.onResponse({ id: String(i), source: 'codex', text: `回答 ${i}\n第二段`, player: 'Alice', timestamp: new Date().toISOString() });
+  const snapshot = await controller.snapshot();
+  assert.equal(changes, 105);
+  assert.equal(snapshot.logs.length, 0);
+  assert.equal(snapshot.aiResponses.length, 100);
+  assert.equal(snapshot.aiResponses[0].id, '5');
+  assert.equal(snapshot.aiResponses.at(-1).text, '回答 104\n第二段');
+  await controller.stop();
+  assert.deepEqual((await controller.snapshot()).aiResponses, snapshot.aiResponses);
+});
+
 test('同一时间只执行一个管理操作，忙碌状态不会永久卡住', async t => {
   const { controller } = await fixture(t);
   let release; const first = controller.run('pending', () => new Promise(resolve => { release = resolve; }));

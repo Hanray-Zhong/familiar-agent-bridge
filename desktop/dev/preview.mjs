@@ -9,7 +9,7 @@ const port = Number(process.env.FAMILIAR_BRIDGE_PREVIEW_PORT || 3361);
 const base = `http://127.0.0.1:${port}`;
 let rules = await readFile(join(root, 'agents/dm/AGENTS.md'), 'utf8');
 const state = { profile: { directory: '界面演示 · 数据只保存在内存', root: '演示配置', fields: configFields, values: { ...configDefaults } },
-  pairing: null, status: { phase: 'stopped', queued: 0, uncertain: 0, healthy: false }, environment: null, busy: null, logs: [], models: [], threads: [], notice: '' };
+  pairing: null, status: { phase: 'stopped', queued: 0, uncertain: 0, healthy: false }, environment: null, busy: null, logs: [], aiResponses: [], models: [], threads: [], notice: '' };
 const log = text => { state.logs.push({ id: String(Date.now()), text: `[演示] ${text}` }); state.logs = state.logs.slice(-300); };
 const models = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'].map((model, i) => ({ model, displayName: model, hidden: false, isDefault: i === 0, defaultReasoningEffort: 'medium', supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort })) }));
 const actions = {
@@ -31,7 +31,14 @@ const actions = {
   stop: () => { state.status.phase = 'stopped'; state.status.healthy = state.status.listening = false; log('Bridge 已停止'); },
   recover: () => { state.status.phase = 'running'; state.status.healthy = true; },
   doctor: () => { log('演示链路检查通过'); return { id: 'demo-world', name: '演示世界（未调用真实工具）' }; },
-  sendMessage: text => { if (!text?.trim()) throw new Error('请输入请求'); log('请求已处理（仅模拟，没有发送 Foundry Chat）'); },
+  sendMessage: text => {
+    if (!text?.trim()) throw new Error('请输入请求');
+    const id = String(Date.now()), timestamp = new Date().toISOString(), player = state.profile.values.TEST_PLAYER || '玩家';
+    state.aiResponses.push({ id: `${id}-chat`, timestamp, player, source: 'foundry', text: '[演示] 你环顾四周，石墙上的火把微微摇晃。\n远处的走廊传来脚步声。你打算怎么做？' },
+      { id: `${id}-answer`, timestamp, player, source: 'codex', text: '[演示] 已完成场景观察并等待玩家决定。\n此处仅模拟回答，没有调用 AI 或发送 Foundry Chat。' });
+    state.aiResponses = state.aiResponses.slice(-100);
+    log('请求已处理（仅模拟，没有发送 Foundry Chat）');
+  },
   pairing: value => {
     if (state.pairing && !value.rotate) throw new Error('配对已存在，修改时请勾选重新生成');
     if (!Number.isInteger(value.port) || value.port < 1024 || value.port > 65535) throw new Error('端口应为 1024–65535');

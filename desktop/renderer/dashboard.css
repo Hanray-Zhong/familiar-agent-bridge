@@ -188,3 +188,28 @@
                                                                                             overflow:auto;
                                                                                             color:#61715b;
                                                                                             margin-bottom:0}
+.log-tabs{
+  display:flex;
+  gap:6px;
+  margin-top:16px;
+  padding-bottom:10px;
+  border-bottom:1px solid #e7ebdf}
+.log-tabs button{
+  border:1px solid transparent;
+  border-radius:7px;
+  padding:6px 14px;
+  background:transparent;
+  color:#7a8973;
+  font-size:12px}
+.log-tabs button[aria-selected="true"]{
+  background:#e9eee3;
+  border-color:#dae3d2;
+  color:#33553c;
+  font-weight:600}
+.log-tabs button:hover{
+  background:#f1f5ed}
+.ai-responses{
+  font-family:inherit;
+  font-size:12px;
+  line-height:1.85;
+  color:#42533e}

@@ -1,4 +1,4 @@
-import { $, buildFields, fillSettings, fillPairing, formValues, render, modelOptions, effortOptions, renderThreads } from './render.mjs';
+import { $, buildFields, fillSettings, fillPairing, formValues, render, modelOptions, effortOptions, renderThreads, scrollLogsToBottom, selectLogTab } from './render.mjs';
 const api = globalThis.bridge;
 let state, built = false, dirty = false, pairDirty = false, rulesDirty = false, rulesLoaded = false, refreshing, pendingRefresh = false;
 let lastProfile, lastPairing, lastModels, lastThreads, toastTimer;
@@ -45,11 +45,27 @@ async function navigate(page) {
   for (const section of document.querySelectorAll('.page')) section.hidden = section.id !== `page-${page}`;
   for (const button of document.querySelectorAll('.nav-item')) button.classList.toggle('active', button.dataset.page === page);
   $('page-title').textContent = pages[page][0]; $('page-description').textContent = pages[page][1];
+  if (page === 'overview') scrollLogsToBottom();
   window.scrollTo(0, 0);
   if (page === 'rules' && !rulesLoaded) await act(async () => { $('rules-editor').value = await api.rules(); rulesLoaded = true; });
 }
 
 for (const button of document.querySelectorAll('[data-page]')) button.addEventListener('click', () => { void navigate(button.dataset.page); });
+document.querySelector('.log-card').addEventListener('toggle', event => {
+  if (event.currentTarget.open) scrollLogsToBottom();
+});
+const logTabs = [...document.querySelectorAll('[data-log-tab]')];
+for (const [index, tab] of logTabs.entries()) {
+  tab.addEventListener('click', () => selectLogTab(tab.dataset.logTab));
+  tab.addEventListener('keydown', event => {
+    const targetIndex = { ArrowRight: (index + 1) % logTabs.length, ArrowLeft: (index + logTabs.length - 1) % logTabs.length,
+      Home: 0, End: logTabs.length - 1 }[event.key];
+    if (targetIndex === undefined) return;
+    event.preventDefault();
+    selectLogTab(logTabs[targetIndex].dataset.logTab);
+    logTabs[targetIndex].focus();
+  });
+}
 for (const button of document.querySelectorAll('.save-settings')) button.addEventListener('click', () => act(async () => {
   const values = formValues(state);
   await api.saveSettings(values); dirty = false; lastProfile = null; $('page-title').classList.remove('is-dirty'); rulesLoaded = false;

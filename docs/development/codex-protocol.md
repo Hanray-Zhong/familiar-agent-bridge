@@ -38,6 +38,8 @@ Turn 的权限字段为 `sandboxPolicy: {type: "readOnly", networkAccess: false}
 
 从 `item/completed` 累积工具结果；最终 `turn.items` 可能不完整。`turn/start` 响应前到达的通知要先缓存，再按正式 Turn ID 匹配。
 
+桌面回答页复用玩家 Turn 的 `onItem` 与完成后的 Item 集合，不解析系统日志。`agentMessage.text` 在 `phase === "final_answer"` 时展示，`phase` 缺失或为 `null` 时兼容展示；显式 `commentary` 和 `reasoning` 不收集。Familiar 的 `send-chat-message` / `send_chat_message` 仅在 `status === "completed"`、存在结果且无失败标记时，展示 `arguments.content` 并标为“Foundry 聊天”。两种来源分别保留，不能用模型最终文本推断已发送玩家聊天。只有完整 Item 进入回答页，不收集文本 delta；同一请求按 Item ID 去重，隔离其他 Thread 和旧 Turn 的通知。
+
 模型传给 Thread 与 Turn 的 `model`。effort 在 Thread 中使用 `config.model_reasoning_effort`，在 Turn 中使用 `effort`。可用值来自 `model/list.supportedReasoningEfforts`，不要写死统一枚举。`src/codex/catalog.mjs` 统一维护模型分页和 `thread/list` 查询参数。
 
 ## MCP 和本机权限
