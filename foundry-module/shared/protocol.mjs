@@ -1,5 +1,4 @@
-// 保持持久化命名空间不变，以复用重命名前的配对、待发消息和设置。
-export const MODULE_ID = 'familiar-codex-bridge';
+export const MODULE_ID = 'familiar-agent-bridge';
 export const PROTOCOL_VERSION = 1;
 export const ROUTES = Object.freeze({ events: '/v1/events', status: '/v1/status' });
 export const SIGNING_HEADERS = ['content-type', 'x-bridge-timestamp', 'x-bridge-nonce', 'x-bridge-signature'];

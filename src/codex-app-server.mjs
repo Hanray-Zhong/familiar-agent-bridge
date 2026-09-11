@@ -75,8 +75,14 @@ export class CodexAppServer extends EventEmitter {
   }
 
   async resumeThread(threadId, options = {}) {
-    const result = await this.request('thread/resume', { ...modelThreadOptions(this, options), threadId, excludeTurns: true });
-    return this.verifySelection(result);
+    try {
+      const result = await this.request('thread/resume', { ...modelThreadOptions(this, options), threadId, excludeTurns: true });
+      return this.verifySelection(result);
+    } catch (error) {
+      if (error.message !== `thread/resume: thread ${threadId} already has an active writer`) throw error;
+      throw Object.assign(new Error(`跑团对话 ${threadId} 被其他 Codex / Bridge 进程占用（active writer）；请在占用方释放该对话，再点击“恢复连接”。Codex 桌面仍占用时需完全退出该应用。`, { cause: error }),
+        { code: 'THREAD_IN_USE', threadId });
+    }
   }
 
   verifySelection(result) {

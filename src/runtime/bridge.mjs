@@ -7,7 +7,8 @@ import { buildPlayerTurnPrompt } from '../prompt-builder.mjs';
 import { normalizeEvent } from '../event-source/base.mjs';
 import { acquireLock } from '../storage/instance-lock.mjs';
 import { threadOptions } from '../codex/policy.mjs';
-import { checkFamiliar, guardGameItem, verifyAgent } from './familiar-health.mjs';
+import { checkFamiliar, createGameItemGuard, verifyAgent } from './familiar-health.mjs';
+import { redact } from './logger.mjs';
 import { createResponseCollector } from './responses/collector.mjs';
 
 export class Bridge extends EventEmitter {
@@ -25,6 +26,7 @@ export class Bridge extends EventEmitter {
     this.healthy = false;
     this.stopping = false;
     this.manualPause = false;
+    this.pauseReason = null;
     this.queue.on('queued', event => logger.info('queue', 'queued message', { id: event.id }));
     this.codex.on('unavailable', error => {
       this.pause(error.message);
@@ -80,6 +82,7 @@ export class Bridge extends EventEmitter {
 
   pause(reason, manual = false) {
     this.healthy = false;
+    this.pauseReason = redact(reason);
     this.manualPause ||= manual;
     this.queue.pause(reason);
     if (!this.stopping) this.logger.warn('bridge', 'Queue paused', { reason, action: this.manualPause ? '由管理员核对后点击“恢复连接”' : '等待连接恢复' });
@@ -124,11 +127,12 @@ export class Bridge extends EventEmitter {
         const { world } = await this.health(this.codex, this.threadId, { timeoutMs: this.config.healthTimeoutMs });
         await this.bindWorld(world);
         this.healthy = true;
+        this.pauseReason = null;
         this.logger.info('health', 'Familiar / Foundry ready', { world });
         if (!this.inspectionOnly) this.queue.resume();
         this.emit('ready');
       } catch (error) {
-        if (['WORLD_CHANGED', 'STORE_FAILURE', 'SECURITY_VIOLATION', 'UNSUPPORTED_CODEX_VERSION', 'MODEL_CONFIGURATION', 'THREAD_CONFIGURATION'].includes(error.code)) this.fatal(error);
+        if (['WORLD_CHANGED', 'STORE_FAILURE', 'SECURITY_VIOLATION', 'UNSUPPORTED_CODEX_VERSION', 'MODEL_CONFIGURATION', 'THREAD_CONFIGURATION', 'THREAD_IN_USE'].includes(error.code)) this.fatal(error);
         else this.pause(error.message);
         if (error.restartRequired && !this.stopping && !this.codex.connection?.closed) {
           await this.codex.request('config/mcpServer/reload').catch(() => this.codex.stop());
@@ -172,12 +176,13 @@ export class Bridge extends EventEmitter {
     try { await this.store.begin(event.id); }
     catch (error) { this.fatal(error); throw error; }
     try {
+      const guardItem = createGameItemGuard(this.codex);
       const collectResponse = createResponseCollector({ event, threadId: this.threadId, familiarServer: this.config.familiarServer },
         response => this.emit('response', response));
       const result = await this.codex.runTurn(this.threadId, buildPlayerTurnPrompt(event), {
         timeoutMs: this.config.turnTimeoutMs, eventId: event.id,
         onItem: (item, method) => {
-          try { guardGameItem(this.codex, item, method); }
+          try { guardItem(item, method); }
           catch (error) { this.pause(error.message, error.code === 'SECURITY_VIOLATION'); throw error; }
           collectResponse(item, method);
         },
@@ -202,6 +207,7 @@ export class Bridge extends EventEmitter {
   status() {
     const state = this.store.snapshot();
     return { threadId: state.threadId, world: state.world, healthy: this.healthy, paused: this.queue.paused,
+      pauseReason: this.pauseReason,
       model: this.model ?? null, reasoningEffort: this.reasoningEffort ?? null,
       queued: state.queued.length, inFlight: state.inFlight?.event.id ?? null, lastProcessedMessageId: state.lastProcessedMessageId,
       uncertain: state.receipts.filter(receipt => receipt.status === 'uncertain').length, restarts: this.restarts };

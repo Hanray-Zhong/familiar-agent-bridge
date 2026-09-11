@@ -55,7 +55,7 @@ export class ProfileStore {
   async importProject(directory) {
     const root = await realpath(directory);
     const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-    if (!['familiar-agent-bridge', 'familiar-codex-bridge'].includes(pkg.name)) throw new Error('请选择 Familiar Agent Bridge 项目文件夹');
+    if (pkg.name !== 'familiar-agent-bridge') throw new Error('请选择 Familiar Agent Bridge 项目文件夹');
     let file = {};
     try { file = parseEnv(await readFile(join(root, '.env'), 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }

@@ -215,3 +215,137 @@ test('resume 失败不会新建替代对话', async t => {
   assert.equal(bridge.healthy, false);
   assert.equal(bridge.queue.paused, true);
 });
+
+test('对话占用时保留待办并停止自动重启，释放后手工恢复同一对话且不重放不确定事件', async t => {
+  const { bridge, codex } = await setup(t, { healthIntervalMs: 10 });
+  await bridge.store.load();
+  await bridge.store.saveThread('saved-thread');
+  await bridge.store.enqueue(event('old'));
+  await bridge.store.begin('old');
+  await bridge.store.finish('old', 'uncertain');
+  await bridge.store.enqueue(event('A'));
+  const before = bridge.store.snapshot();
+  let occupied = true;
+  codex.startThread = async () => { assert.fail('不能新建替代对话'); };
+  codex.resumeThread = async id => {
+    codex.resumes++; codex.resumedId = id;
+    if (occupied) throw Object.assign(new Error('对话被占用；请释放后恢复连接'), { code: 'THREAD_IN_USE' });
+    return { thread: { id }, sandbox: { type: 'readOnly' }, approvalPolicy: 'never' };
+  };
+  await bridge.start();
+  await delay(35);
+  await bridge.recover();
+  assert.equal(bridge.manualPause, true);
+  assert.equal(bridge.queue.paused, true);
+  assert.equal(bridge.status().pauseReason, '对话被占用；请释放后恢复连接');
+  assert.equal(codex.starts, 1);
+  assert.equal(codex.child, null);
+  assert.deepEqual(codex.trace, []);
+  assert.deepEqual(bridge.store.snapshot(), before);
+
+  await bridge.recover({ manual: true }); // 占用尚未解除，再次尝试仍保留待办。
+  assert.equal(bridge.manualPause, true);
+  assert.equal(codex.starts, 2);
+  assert.deepEqual(bridge.store.snapshot(), before);
+  occupied = false;
+  await bridge.recover({ manual: true });
+  await bridge.drain();
+  assert.equal(codex.resumedId, 'saved-thread');
+  assert.equal(codex.resumes, 3);
+  assert.equal(bridge.status().healthy, true);
+  assert.equal(bridge.status().pauseReason, null);
+  assert.equal(bridge.store.snapshot().threadId, 'saved-thread');
+  assert.deepEqual(codex.trace, ['start:A', 'end:A']);
+  assert.deepEqual(bridge.store.snapshot().receipts.map(row => [row.id, row.status]), [['old', 'uncertain'], ['A', 'processed']]);
+});
+
+test('控制台暂停原因沿用脱敏规则，连接恢复后清除旧提示', async t => {
+  const { bridge } = await setup(t);
+  await bridge.start();
+  bridge.pause('连接失败 https://example.com/private?token=secret-value');
+  assert.equal(bridge.status().pauseReason, '连接失败 [URL REDACTED]');
+  await bridge.recover();
+  assert.equal(bridge.status().pauseReason, null);
+});
+
+test('移动后检定未通过仍能发送叙述、保存已处理回执且不会重复执行', async t => {
+  const { bridge, codex } = await setup(t);
+  const calls = [];
+  const outcome = { success: false, roll: { total: 14, natural: 11, modifier: 3 }, dc: 15, ability: 'wis', skill: 'prc' };
+  codex.runTurn = (threadId, prompt, options) => runTurn(codex, threadId, prompt, options);
+  codex.request = async (method, params) => {
+    calls.push(method);
+    const notify = (method, detail) => codex.emit('notification', { method, params: { threadId: params.threadId, ...detail } });
+    if (method === 'turn/interrupt') { notify('turn/completed', { turn: { id: 'turn-check', status: 'interrupted' } }); return {}; }
+    assert.equal(method, 'turn/start');
+    const results = [
+      ['get-world-info', { world: { id: 'one', name: '测试世界' } }],
+      ['move-token', { moved: true, x: 2200, y: 5700 }],
+      ['resolve-ability-check', outcome],
+      ['send-chat-message', { success: true }],
+    ];
+    for (const [tool, result] of results) {
+      notify('item/completed', { turnId: 'turn-check', item: { id: tool, type: 'mcpToolCall', server: 'familiar', tool, status: 'completed',
+        result: { content: [{ type: 'text', text: JSON.stringify(result) }] } } });
+    }
+    notify('turn/completed', { turn: { id: 'turn-check', status: 'completed', items: [] } });
+    return { turn: { id: 'turn-check' } };
+  };
+  await bridge.start();
+  await bridge.accept(event('check'));
+  await bridge.drain();
+  assert.deepEqual(calls, ['turn/start']);
+  assert.equal(bridge.status().healthy, true);
+  assert.equal(bridge.status().paused, false);
+  assert.equal(bridge.status().uncertain, 0);
+  assert.equal(bridge.store.snapshot().lastProcessedMessageId, 'check');
+  assert.equal(bridge.store.snapshot().receipts[0].status, 'processed');
+  assert.equal((await bridge.accept(event('check'))).accepted, false);
+  assert.deepEqual(calls, ['turn/start']);
+});
+
+for (const retryFails of [false, true]) test(`切场景后截图暂时失败，${retryFails ? '重试仍失败则暂停并保留不确定回执' : '重读场景及截图成功后继续完成'}，不重放场景切换`, async t => {
+  const { bridge, codex } = await setup(t);
+  const calls = [], tools = [];
+  let interrupted = false;
+  const canvasError = { isError: true, content: [{ type: 'text', text: 'Error: Canvas is not ready — scene may be loading or no scene is active' }] };
+  const emit = (method, detail) => codex.emit('notification', { method, params: { threadId: 'persistent-thread', ...detail } });
+  const item = (id, tool, result, status = 'completed', readOnlyHint = true) => {
+    if (interrupted) return;
+    tools.push(tool);
+    emit('item/completed', { turnId: 'turn-scene', item: { id, type: 'mcpToolCall', server: 'familiar', tool, result, status, readOnlyHint } });
+  };
+  codex.runTurn = (threadId, prompt, options) => runTurn(codex, threadId, prompt, options);
+  codex.request = async method => {
+    calls.push(method);
+    if (method === 'turn/interrupt') {
+      interrupted = true;
+      emit('turn/completed', { turn: { id: 'turn-scene', status: 'interrupted', items: [] } });
+      return {};
+    }
+    assert.equal(method, 'turn/start');
+    setImmediate(() => {
+      item('world', 'get-world-info', { structuredContent: { world: { id: 'one', name: '测试世界' } } });
+      item('switch', 'switch-scene', { structuredContent: { activated: true, id: 'scene-next' } }, 'completed', false);
+      item('shot-1', 'get-screenshot', canvasError, 'failed');
+      item('scene', 'get-current-scene', { structuredContent: { id: 'scene-next' } });
+      item('shot-2', 'get-screenshot', retryFails ? canvasError : { content: [] }, retryFails ? 'failed' : 'completed');
+      item('chat', 'send-chat-message', { structuredContent: { success: true } }, 'completed', false);
+      if (!interrupted) emit('turn/completed', { turn: { id: 'turn-scene', status: 'completed', items: [] } });
+    });
+    return { turn: { id: 'turn-scene' } };
+  };
+  await bridge.start();
+  await bridge.accept(event('scene'));
+  await bridge.queue.idle();
+  assert.deepEqual(calls, retryFails ? ['turn/start', 'turn/interrupt'] : ['turn/start']);
+  assert.equal(tools.filter(tool => tool === 'switch-scene').length, 1);
+  assert.equal(tools.filter(tool => tool === 'get-screenshot').length, 2);
+  assert.equal(tools.includes('send-chat-message'), !retryFails);
+  assert.equal(bridge.status().paused, retryFails);
+  assert.equal(bridge.status().uncertain, retryFails ? 1 : 0);
+  assert.equal(bridge.store.snapshot().receipts[0].status, retryFails ? 'uncertain' : 'processed');
+  if (retryFails) assert.match(bridge.status().pauseReason, /get-screenshot.*Canvas is not ready/);
+  assert.equal((await bridge.accept(event('scene'))).accepted, false);
+  assert.equal(tools.filter(tool => tool === 'switch-scene').length, 1);
+});

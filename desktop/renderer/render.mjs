@@ -92,7 +92,7 @@ export function render(state) {
   text('operation-text', busy ? `${busy}…` : '');
   $('notice').hidden = !state.notice; text('notice', state.notice || '');
   text('service-hint', { stopped: '准备好后，启动本场跑团。', starting: '正在检查 Codex 与世界连接。', checking: '本次检查只读取世界，不发送聊天。',
-    running: '已就绪，玩家请求将按顺序处理。', paused: '队列已暂停；核对原因后恢复连接。', stopping: '正在停止服务并保存尚未处理的请求。' }[phase]);
+    running: '已就绪，玩家请求将按顺序处理。', paused: status.pauseReason || '队列已暂停；核对原因后恢复连接。', stopping: '正在停止服务并保存尚未处理的请求。' }[phase]);
   const cliReady = environment?.compatible || healthy;
   text('codex-state', environment?.version || (healthy ? '已连接' : '等待检查'));
   text('world-state', healthy ? status.world?.name || '世界已连接' : '尚未连接世界');

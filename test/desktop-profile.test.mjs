@@ -10,7 +10,7 @@ import { projectRoot, loadConfig } from '../src/runtime/config.mjs';
 import { configDefaults } from '../src/runtime/config-fields.mjs';
 import { serverArgs, threadOptions } from '../src/codex/policy.mjs';
 import { acquireLock } from '../src/storage/instance-lock.mjs';
-import { prepareDevelopmentData, reuseLegacyData } from '../desktop/main/application-paths.mjs';
+import { prepareDevelopmentData } from '../desktop/main/application-paths.mjs';
 
 async function profile(t) {
   const dir = await mkdtemp(join(tmpdir(), 'familiar-desktop-profile-'));
@@ -24,24 +24,6 @@ test('开发首次启动先创建数据目录；打包版不接受开发数据�
   prepareDevelopmentData({ isPackaged: false, setPath(name, path) { assert.equal(name, 'userData'); assert.equal(path, directory); assert.ok(existsSync(path)); called = true; } }, projectRoot, { FAMILIAR_BRIDGE_APP_DATA: directory });
   assert.equal(called, true);
   prepareDevelopmentData({ isPackaged: true, setPath() { throw new Error('不应修改'); } }, projectRoot, { FAMILIAR_BRIDGE_APP_DATA: directory });
-});
-
-test('应用重命名后复用旧数据；空目录不阻止恢复，已有新配置时不覆盖', async t => {
-  const store = await profile(t), previous = join(store.directory, 'Familiar Codex Bridge');
-  const current = join(store.directory, 'Familiar Agent Bridge');
-  const paths = [], app = { isPackaged: true, getPath: () => store.directory, setPath: (key, value) => paths.push([key, value]) };
-  reuseLegacyData(app); assert.deepEqual(paths, []);
-  await mkdir(previous); await writeFile(join(previous, 'settings.json'), '原有数据');
-  reuseLegacyData(app); assert.deepEqual(paths, [['userData', previous]]);
-  paths.length = 0;
-  await mkdir(current);
-  reuseLegacyData(app); assert.deepEqual(paths, [['userData', previous]]);
-  paths.length = 0;
-  await writeFile(join(current, 'settings.json'), '新的配置');
-  reuseLegacyData(app); assert.deepEqual(paths, []);
-  reuseLegacyData({ isPackaged: false, getPath() { throw new Error('开发版不检查系统目录'); } });
-  assert.equal(await readFile(join(previous, 'settings.json'), 'utf8'), '原有数据');
-  assert.equal(await readFile(join(current, 'settings.json'), 'utf8'), '新的配置');
 });
 
 test('跑团规则的符号链接也不能指向开发规则', async t => {
@@ -94,7 +76,7 @@ test('初始化中断后保留已经写好的用户规则，不覆盖恢复', as
 test('接管旧版数据复用状态及锁路径，迁移测试玩家名称且不复制密钥', async t => {
   const store = await profile(t), cli = join(store.directory, 'cli');
   await mkdir(join(cli, 'agents/dm'), { recursive: true }); await mkdir(join(cli, 'data'));
-  await writeFile(join(cli, 'package.json'), JSON.stringify({ name: 'familiar-codex-bridge' }));
+  await writeFile(join(cli, 'package.json'), JSON.stringify({ name: 'familiar-agent-bridge' }));
   await writeFile(join(cli, 'agents/dm/AGENTS.md'), 'CLI 规则');
   const originalEnv = 'CODEX_MODEL=test-model\nSTDIN_PLAYER=旧版玩家\nPRIVATE_SECRET=fixture-only\n';
   await writeFile(join(cli, '.env'), originalEnv);
@@ -112,8 +94,10 @@ test('接管旧版数据复用状态及锁路径，迁移测试玩家名称且�
   assert.ok(!JSON.stringify(store.snapshot()).includes('fixture-only'));
   assert.equal(await readFile(config.stateFile, 'utf8'), state);
   assert.equal(await readFile(join(cli, '.env'), 'utf8'), originalEnv);
-  await writeFile(join(cli, 'package.json'), JSON.stringify({ name: 'familiar-agent-bridge' }));
-  await store.importProject(cli);
+  const settings = await readFile(store.file);
+  await writeFile(join(cli, 'package.json'), JSON.stringify({ name: 'another-project' }));
+  await assert.rejects(store.importProject(cli), /请选择 Familiar Agent Bridge 项目文件夹/);
+  assert.deepEqual(await readFile(store.file), settings);
   assert.equal((await store.config()).stateFile, config.stateFile);
   assert.equal(await readFile(config.stateFile, 'utf8'), state);
 });

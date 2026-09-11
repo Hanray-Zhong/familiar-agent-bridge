@@ -9,4 +9,4 @@ const { fileName } = await modulePackageInfo(source);
 const target = args.length ? resolve(args[1]) : join(projectRoot, 'dist/foundry', fileName);
 const result = await packageFoundryModule(source, target);
 console.log(`Foundry 模块安装包：${result.path}`);
-console.log(`包含 ${result.files} 个运行文件。解压后，将 familiar-codex-bridge 文件夹放入 Foundry 的 Data/modules。`);
+console.log(`包含 ${result.files} 个运行文件。解压后，将 familiar-agent-bridge 文件夹放入 Foundry 的 Data/modules。`);

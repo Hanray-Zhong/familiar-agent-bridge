@@ -52,3 +52,13 @@ HTTP 只监听 `127.0.0.1`，提供 `/v1/events` 与 `/v1/status`。HMAC-SHA256 
 磁盘写入使用同目录临时文件、fsync、rename 和目录 fsync。JSON、DM 文本和模块 ZIP 共用原子写入函数。配置目录和状态路径分别加锁；旧 Codex 进程未清理完前不能释放锁。
 
 无法跨 Foundry、Codex 与本地文件保证一次操作和回执同时成功，因此不能用自动重试掩盖“外部操作已成功但回执丢失”的情况。
+
+## Foundry 回答提示
+
+`foundry-module/relay/outbox.mjs` 在投递和状态查询后发布回执状态。查询间隔为 2 秒，每批最多 100 个 ID；返回的 ID 和状态必须完整匹配查询，失败时显示状态失联。`queued`、`running`、`processed` 分别显示排队、回答中和完成；暂停、投递失败、取消以及 `uncertain` / `unknown` 显示对应的处理建议。状态提示不修改 HTTP 协议、串行队列和去重规则。
+
+`relay/request-status.mjs` 仅由指定 GM 将固定状态、更新时间和 GM ID 写入原聊天消息的 `flags.familiar-agent-bridge.requestStatus`。使用 Foundry 的 `setFlag` 与 `updateChatMessage` 同步，不新增聊天、不附带请求正文或内部异常，也不修改原密语接收者。原消息 flags 不参与请求摘要，所以状态更新不会造成重复投递或内容冲突。API 依据 [ChatMessage 文档](https://foundryvtt.com/api/v14/classes/foundry.documents.ChatMessage.html)和 [updateDocument hook](https://foundryvtt.com/api/v14/functions/hookEvents.updateDocument.html)。
+
+`ui/request-feedback.mjs` 在所有游戏客户端运行，校验更新者为指定 GM，并沿用消息可见范围；密语额外检查当前用户为原接收者或发送者。发送时先显示本地等待提示，后续回执更新同一条通知；多条活跃请求合并计数，全部完成或失联后移除。使用 Foundry 14 [Notifications API](https://foundryvtt.com/api/v14/classes/foundry.applications.ui.Notifications.html) 的常驻文字提示，不虚构进度百分比。
+
+相同活跃状态最多每 30 秒刷新一次 flag，60 秒没有更新则停止显示等待并提示 GM 核对。页面恢复只读取由 GM 最后修改的活跃状态，不重复弹出旧终态。删除消息、停用推送和离开页面会清理提示。单次 flag 写入最多等待 5 秒；失败的提示保留到下轮重试，ACK 和终态不会因此回滚，也不会再次执行已接收请求。

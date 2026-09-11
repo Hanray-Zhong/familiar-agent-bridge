@@ -18,14 +18,19 @@ export function gameFixture(pair) {
     [`${MODULE_ID}.allowGmRequests`, false], [`${MODULE_ID}.pairing`, pair], [`${MODULE_ID}.outboxes`, {}], ['familiar.tableChatEnabled', false],
   ]);
   return { world: { id: pair.worldId }, user: users[0], users: { contents: users, get: id => users.find(user => user.id === id) },
-    messages: { contents: [] }, modules: new Map([['familiar', { active: true }]]),
+    messages: { contents: [], get(id) { return this.contents.find(message => message.id === id); } }, modules: new Map([['familiar', { active: true }]]),
     settings: { get: (module, key) => structuredClone(settings.get(`${module}.${key}`)),
       set: async (module, key, value) => { settings.set(`${module}.${key}`, structuredClone(value)); } } };
 }
 
 export function message(game, id = 'msg1', fields = {}) {
   return { id, author: game.users.get('alice'), content: '@familiar 我检查门', timestamp: Date.now(),
-    _stats: { createdTime: Date.now() }, flags: {}, speaker: {}, whisper: [], rolls: [], visible: true, isContentVisible: true, ...fields };
+    _stats: { createdTime: Date.now() }, flags: {}, speaker: {}, whisper: [], rolls: [], visible: true, isContentVisible: true,
+    async setFlag(scope, key, value) {
+      this.flags[scope] ??= {};
+      this.flags[scope][key] = structuredClone(value);
+      this._stats.lastModifiedBy = game.user.id;
+    }, ...fields };
 }
 
 export class FakeLocks {

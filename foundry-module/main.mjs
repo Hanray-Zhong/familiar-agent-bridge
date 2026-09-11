@@ -2,13 +2,16 @@ import { MODULE_ID } from './shared/protocol.mjs';
 import { htmlToText } from './relay/message.mjs';
 import { RelayController } from './relay/controller.mjs';
 import { settingsApplication } from './ui/settings.mjs';
+import { RequestFeedback } from './ui/request-feedback.mjs';
 
 let controller;
+let feedback;
+const textOf = message => htmlToText(message.content ?? '', document);
 const notify = (text, level = 'warn') => ui.notifications[level](text);
 const restart = async () => {
   await controller?.stop();
   controller = new RelayController({ game, locks: navigator.locks, notify,
-    textOf: message => htmlToText(message.content ?? '', document) });
+    textOf });
   controller.start();
 };
 
@@ -23,6 +26,15 @@ Hooks.once('init', () => {
     type: settingsApplication({ game, ApplicationV2: foundry.applications.api.ApplicationV2, notify, restart, controller: () => controller }) });
 });
 
-Hooks.once('ready', () => { if (game.user.isGM) void restart().catch(error => notify(error.message, 'error')); });
-Hooks.on('createChatMessage', (message, _options, userId) => { void controller?.observe(message, userId).catch(error => notify(error.message, 'error')); });
-window.addEventListener('beforeunload', () => { void controller?.stop(); });
+Hooks.once('ready', () => {
+  feedback = new RequestFeedback({ game, notifications: ui.notifications, textOf });
+  feedback.start();
+  if (game.user.isGM) void restart().catch(error => notify(error.message, 'error'));
+});
+Hooks.on('createChatMessage', (message, _options, userId) => {
+  feedback?.observe(message, userId);
+  void controller?.observe(message, userId).catch(error => notify(error.message, 'error'));
+});
+Hooks.on('updateChatMessage', (message, _changed, _options, userId) => feedback?.update(message, userId));
+Hooks.on('deleteChatMessage', message => feedback?.remove(message.id));
+window.addEventListener('beforeunload', () => { feedback?.stop(); void controller?.stop(); });

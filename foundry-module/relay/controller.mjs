@@ -2,10 +2,11 @@ import { MODULE_ID, validatePairing } from '../shared/protocol.mjs';
 import { Outbox } from './outbox.mjs';
 import { buildFoundryEvent, canRelay, messageTime } from './message.mjs';
 import { signedPost } from './transport.mjs';
+import { createStatusPublisher } from './request-status.mjs';
 
 export class RelayController {
-  constructor({ game, locks, notify, textOf, post = signedPost }) {
-    Object.assign(this, { game, locks, notify, textOf, post });
+  constructor({ game, locks, notify, textOf, post = signedPost, onStatus = createStatusPublisher({ game }) }) {
+    Object.assign(this, { game, locks, notify, textOf, post, onStatus });
     this.owner = false;
     this.stopped = false;
     this.lastWarning = '';
@@ -37,7 +38,7 @@ export class RelayController {
       this.outbox = new Outbox({
         read: () => this.game.settings.get(MODULE_ID, 'outboxes')[storageKey],
         write: async state => { const all = this.game.settings.get(MODULE_ID, 'outboxes'); await this.game.settings.set(MODULE_ID, 'outboxes', { ...all, [storageKey]: state }); },
-        post: (path, payload) => this.post(pairing, path, payload), notify: message => this.warn(message),
+        post: (path, payload) => this.post(pairing, path, payload), notify: message => this.warn(message), onStatus: this.onStatus,
       });
       await this.outbox.load();
       this.owner = true;

@@ -6,11 +6,13 @@
 
 主进程启动 Bridge；renderer 禁用 Node，并启用 sandbox、contextIsolation。IPC 校验窗口、主 frame 和精确 UI URL，拒绝导航、新窗口和任意文件操作。
 
+主进程入口先设置数据目录、获取单实例锁，再通过 `app.whenReady().then(...)` 初始化配置与窗口。不能在入口模块顶层 `await app.whenReady()`：Electron 等 ES Module 完成求值后才触发 `ready`，两边等待会导致进程常驻却没有窗口。异步初始化失败沿用错误对话框和关闭流程。加载页面并显示窗口后，终端输出“桌面窗口已打开”。ESM 时序见 [Electron 官方说明](https://www.electronjs.org/docs/latest/tutorial/esm)。
+
 桌面独立数据放在操作系统的应用数据目录。开发版默认使用 `data/desktop/`；可仅为开发设置 `FAMILIAR_BRIDGE_APP_DATA`。预览端口默认 `3361`，可用 `FAMILIAR_BRIDGE_PREVIEW_PORT` 修改。这两项不是用户 Bridge 配置。
 
-项目和应用分别命名为 `familiar-agent-bridge`、Familiar Agent Bridge。安装版在新目录没有 `settings.json`、旧目录存在该配置时复用旧 Familiar Codex Bridge 目录，空缓存目录不阻止恢复。Foundry 的持久化模块 ID 保持 `familiar-codex-bridge`，只更新显示名称和安装包文件名。
+项目和 Foundry 模块 ID 统一为 `familiar-agent-bridge`，应用显示名称为 Familiar Agent Bridge。安装版使用系统应用数据目录下的 `Familiar Agent Bridge/`，不再回退到旧名称目录。Foundry 设置、配对、待发消息和浏览器锁统一使用当前模块 ID，不迁移旧名称的命名空间。
 
-旧版数据接管是保留的兼容入口：只在用户选择旧项目时读取其 `.env`，复用状态与锁，不复制配对密钥。正常启动仅加载桌面 `settings.json`，不自动读取 `.env` 或进程中的 Bridge 配置。旧 `STDIN_PLAYER` 自动映射到 `TEST_PLAYER`，下次保存才更新磁盘。关闭应用时等待 Bridge 与所有子进程退出；最小化保持运行。
+旧版数据接管只接受 `package.json` 中 `name` 为 `familiar-agent-bridge` 的项目：只在用户选择项目时读取其 `.env`，复用状态与锁，不复制配对密钥。正常启动仅加载桌面 `settings.json`，不自动读取 `.env` 或进程中的 Bridge 配置。旧 `STDIN_PLAYER` 自动映射到 `TEST_PLAYER`，下次保存才更新磁盘。关闭应用时等待 Bridge 与所有子进程退出；最小化保持运行。
 
 ## 运行日志与 AI 回答
 
@@ -24,7 +26,7 @@ Bridge 的 `response` 事件经 DesktopSession 回调进入 DesktopController �
 
 ## Foundry ZIP
 
-`src/foundry/module-package.mjs` 从 `module.json` 的入口收集静态相对依赖，打包为带 `familiar-codex-bridge/` 顶层目录的 ZIP。版本来自模块清单。新增资源类型或动态加载文件时，要扩展收集逻辑并增加解压测试，不能直接扫描整个项目打包。
+`src/foundry/module-package.mjs` 从 `module.json` 的入口收集静态相对依赖，打包为带 `familiar-agent-bridge/` 顶层目录的 ZIP。版本来自模块清单。新增资源类型或动态加载文件时，要扩展收集逻辑并增加解压测试，不能直接扫描整个项目打包。
 
 ZIP 使用 Node 原生 Deflate，不依赖系统压缩命令或新增 npm 包。文件排序与时间固定，同一份输入可重复生成相同文件。打包拒绝越界路径和符号链接，限制单文件 4 MiB、总计 16 MiB 和 256 个文件。
 

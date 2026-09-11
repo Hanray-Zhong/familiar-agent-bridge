@@ -7,11 +7,10 @@ import { DesktopController } from './controller.mjs';
 import { registerIpc } from './ipc.mjs';
 import { redact } from '../../src/runtime/logger.mjs';
 import { createMainWindow } from './window.mjs';
-import { prepareDevelopmentData, reuseLegacyData } from './application-paths.mjs';
+import { prepareDevelopmentData } from './application-paths.mjs';
 
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url));
 app.setName('Familiar Agent Bridge');
-reuseLegacyData(app);
 prepareDevelopmentData(app, sourceRoot);
 const resources = app.isPackaged ? join(process.resourcesPath, 'bridge-resources') : sourceRoot;
 const uiFile = join(sourceRoot, 'desktop/renderer/index.html');
@@ -33,8 +32,8 @@ else {
   app.on('before-quit', event => { if (!quitting) { event.preventDefault(); void quit(); } });
   process.on('SIGTERM', () => { void quit(); });
   process.on('SIGINT', () => { void quit(); });
-  await app.whenReady();
-  try {
+  // Electron 要等入口 ESM 完成求值才触发 ready；顶层 await whenReady 会互相等待。
+  void app.whenReady().then(async () => {
     await mkdir(app.getPath('userData'), { recursive: true, mode: 0o700 });
     const profile = new ProfileStore(app.getPath('userData'), resources);
     await profile.load();
@@ -59,5 +58,6 @@ else {
     });
     await window.loadFile(uiFile);
     window.show();
-  } catch (error) { dialog.showErrorBox('应用无法启动', redact(error.message)); await quit(); }
+    console.log('桌面窗口已打开。关闭窗口或按 Ctrl+C 退出。');
+  }).catch(async error => { dialog.showErrorBox('应用无法启动', redact(error.message)); await quit(); });
 }

@@ -30,19 +30,19 @@ macOS Apple Silicon（M 系列芯片）使用 DMG 安装包，将应用拖到“
 5. 回到“跑团控制台”，选择 **Foundry @familiar**，点击“启动 Bridge”。
 6. 用玩家账号发送：`@familiar 我环顾当前场景。`
 
-成功时，控制台会显示请求处理进度，Foundry Chat 会收到 Familiar 发出的中文回复。
+发送后，Foundry 世界内会显示 Familiar 的发送、排队或“正在回答”提示；成功时提示自动收起，Foundry Chat 会收到 Familiar 发出的中文回复。异常时会提示重试或先请 GM 核对结果，具体见第 7 节。
 
 “只读检查完整链路”会实际读取世界，不发聊天、不掷骰。控制台的“发起一个测试请求”则是正常游戏请求，会产生 Foundry Chat 回复。
 
 ### 接着使用旧版跑团数据
 
-先停止旧版 Bridge，再点击“连接设置 → 接管旧版跑团数据”，选择保留旧配置和状态的项目目录。
+先停止旧版 Bridge，再点击“连接设置 → 接管旧版跑团数据”，选择保留旧配置和状态的项目目录。项目名称必须为 `familiar-agent-bridge`（以 `package.json` 的 `name` 为准）。
 
 接管只读取旧项目 `.env` 中支持的设置，继续使用原状态、配对和 DM 规则文件。之后在桌面修改配置，保存到应用自己的 `settings.json`；不会改写原 `.env`，也不需要再运行旧版 CLI。
 
 ## 2. 生成并安装 Foundry 模块
 
-**Familiar Agent Bridge 模块和 Familiar 是两个模块，两者都要启用。** 桥接模块只负责转发玩家请求。
+**Familiar Agent Bridge 模块和 Familiar 是两个模块，两者都要启用。** 桥接模块负责转发玩家请求，并显示等待回答和异常提示。
 
 ### 获取 ZIP
 
@@ -54,9 +54,9 @@ macOS Apple Silicon（M 系列芯片）使用 DMG 安装包，将应用拖到“
 npm run dist:foundry
 ```
 
-生成 `dist/foundry/familiar-agent-bridge-module-0.2.0.zip`。文件名中的版本来自模块自己的 `module.json`，可与桌面应用版本不同。
+生成 `dist/foundry/familiar-agent-bridge-module-0.3.0.zip`。文件名中的版本来自模块自己的 `module.json`，可与桌面应用版本不同。
 
-模块显示名称已改为 Familiar Agent Bridge，但内部 ID 仍保留 `familiar-codex-bridge`，因此解压后的文件夹也使用旧名称。这样可以沿用已有设置、配对和待发消息。
+模块显示名称为 Familiar Agent Bridge，模块 ID 和解压后的文件夹统一为 `familiar-agent-bridge`。首次安装当前名称的模块后，需要重新导入配对文件并启用推送。
 
 需要指定输出位置时：
 
@@ -68,15 +68,15 @@ npm run dist:foundry -- --output "/你的目录/bridge-module.zip"
 
 ### 安装到 Foundry
 
-1. 解压 ZIP，得到 `familiar-codex-bridge` 文件夹。
+1. 解压 ZIP，得到 `familiar-agent-bridge` 文件夹。
 2. 将整个文件夹放到 **Foundry 用户数据目录的 `Data/modules/` 下**。
-3. 确认文件位置为 `Data/modules/familiar-codex-bridge/module.json`，不要多嵌套一层文件夹。
+3. 确认文件位置为 `Data/modules/familiar-agent-bridge/module.json`，不要多嵌套一层文件夹。
 4. 让 Foundry 重新发现模块；若列表里没有，在合适时机重启 Foundry。
 5. 进入世界，在“管理模组 / Manage Modules”启用 **Familiar Agent Bridge**。
 
 模块文件应放在运行 Foundry 服务器的电脑上。macOS 默认用户数据目录通常是 `~/Library/Application Support/FoundryVTT/`；以你在 Foundry 中选择的位置为准。
 
-更新时先停止 Bridge、备份旧模块目录，再替换模块文件并刷新 GM 页面。已有私有配对文件可以继续使用。
+更新时先停止 Bridge、备份旧模块目录，再替换模块文件并刷新 GM 和玩家页面。已有私有配对文件可以继续使用。
 
 Foundry 的“安装模组 → Manifest URL”需要在线清单地址，不能填本机 ZIP 路径。当前项目提供离线 ZIP，安装方式以上述解压步骤为准。模块目录结构依据 [Foundry 官方说明](https://foundryvtt.com/article/module-development/)。
 
@@ -133,6 +133,8 @@ Foundry 的“安装模组 → Manifest URL”需要在线清单地址，不能�
 一般将“固定对话 ID”留空，Bridge 首次创建对话，以后自动恢复。界面上打开了哪个 Codex 对话，不会影响 Bridge 的选择。
 
 要指定已有对话：停止 Bridge，在“对话与模型”中查询并选择本场跑团的空闲对话，保存后启动。这里使用 Codex CLI / App Server 对话 ID，不是普通 ChatGPT 网页链接。
+
+同一跑团对话同一时间只能由一个 Codex 进程写入。Codex 桌面即使已经停止生成，也可能仍占用该对话。出现 `active writer` 时，先在占用方释放对话；若仍报错，待其他任务结束后完全退出占用它的 Codex 桌面应用，再回到 Bridge 点击“恢复连接”。Bridge 会保留原对话和排队请求，并暂停自动重启；仅反复重启 Bridge 无法解除其他进程的占用。
 
 如果目标 ID 与当前状态中的 ID 不同，Bridge 会阻止直接切换。先备份状态，点击“新开跑团会话…”解除旧绑定，再选择目标 ID。新开会话会取消旧待办，不会删除 Codex 历史或回滚已执行的游戏动作。
 
@@ -206,9 +208,11 @@ npm run desktop
 
 源码运行要求 Node.js 22.12+。`npm run desktop:preview` 只用于界面演示，不连接真实游戏。
 
+`npm run desktop` 成功启动后会打开桌面窗口，并在终端显示“桌面窗口已打开”。窗口开启期间命令持续运行是正常现象；关闭窗口或在终端按 Ctrl+C 退出。如果一直停在 `electron .` 且没有窗口，则尚未完成启动，排查时请保留终端输出。
+
 开发版默认数据目录是项目的 `data/desktop/`。macOS 安装版默认位于 `~/Library/Application Support/Familiar Agent Bridge/`。通过“使用帮助 → 打开应用数据目录”可以找到当前实际位置。
 
-升级前已使用旧名称的桌面版时，如果新目录尚未保存 `settings.json`，应用会继续使用 `~/Library/Application Support/Familiar Codex Bridge/` 中已有的配置与数据。不会合并或覆盖两份数据。
+安装版始终使用当前名称的数据目录，不自动读取或迁移旧名称目录中的配置与数据。
 
 在桌面上完成原有管理操作：
 
@@ -229,6 +233,21 @@ npm run desktop
 
 普通消息从正文开头写 `@familiar`，后面加空格或冒号。Familiar 自己的回复会被过滤。私聊只在配对 GM 有权看到时转发，回复不会扩大到公开聊天。
 
+### 等待回答和异常提示
+
+模块 0.3.0 起，世界内使用 Foundry 原生通知显示“正在发送请求”“请求已排队”或“正在回答”。多条请求合并到一条常驻提示中，全部完成后自动收起。公开请求的提示对世界内玩家可见；密语只向原接收者和发送者显示，不会新增公开聊天。
+
+| 提示情况 | 下一步 |
+| --- | --- |
+| 正在发送、已排队或正在回答 | 等待回复，无需重复发送 |
+| 暂未确认收到、发送异常 | 请 GM 修复连接，在模块设置中点击“重试待发消息”；保留原消息，玩家暂勿重复发送 |
+| 暂停回答 | 请 GM 在桌面恢复连接，已接收的请求仍保留排队 |
+| 回答异常、结果无法确认 | 请 GM 先核对聊天、掷骰和资源；确认后只重试未完成的部分 |
+| 请求已取消 | 需要继续时，重新发送 `@familiar` 请求 |
+| 未转发请求 | 检查消息长度，或请 GM 核对密语接收者与同名用户，修正后重试 |
+
+正常情况下，回答状态约每 2 秒查询一次。若 GM 页面关闭或连接中断，等待提示最长约 1 分钟后转为核对提示；这只表示状态失联，不代表 AI 已停止或行动没有执行。恢复连接后，已接收的请求仅查询结果，不会自动重新执行。
+
 展开跑团控制台下方的“运行日志”，可以切换两个标签页：
 
 - **系统日志**：查看连接、队列和工具执行状态，保留本次运行最近 300 条，受 `LOG_LEVEL` 控制。
@@ -239,6 +258,10 @@ npm run desktop
 回答在收到完整记录后显示，开始使用前的旧回答不会补载。停止 Bridge 后仍可查看，关闭应用后清空。Codex 回答可能包含 GM 信息，仅在桌面查看；玩家实际收到的内容以 Foundry Chat 为准。回答出现不代表整条请求已成功，后续失败仍按“需要核对”处理。
 
 断线后，尚未开始的请求保留排队。显示“需要核对”表示请求可能部分生效：先检查聊天、掷骰和资源消耗，再点击“恢复连接”。不要删除状态文件或反复重发同一行动。
+
+技能检定或豁免未通过属于正常游戏结果，DM 应继续说明结果，不应因此出现“需要核对”。例如感知检定总值 14、DC 15，表示角色没有通过该次检定。旧版 Bridge 曾将这类 `success: false` 回执误判成工具故障；更新后重启 Bridge 生效。已经被中断的旧请求仍需核对，不会自动补做；移动和掷骰可能已经完成，不要重发整条行动。
+
+刚切换场景后，截图可能返回 `Canvas is not ready`，表示画布尚未准备好。若本次请求已有场景切换成功的回执，Bridge 会为这个明确的只读错误保留一次恢复机会，记录警告并让 DM 继续查询场景或稍后再截图。连续失败、断线或其他错误仍会中断，并在日志中显示具体工具和原因。更新前因此中断的请求不会自动补做；先确认当前场景，再让 DM 从现状继续，不要重复发送整条行动。
 
 ### 备份
 
@@ -261,5 +284,6 @@ npm run desktop
 | 端口占用 | 先停止重复实例；需要换端口时更新配对并重新导入 |
 | 模型或 effort 不支持 | 刷新模型列表，使用该模型返回的值 |
 | 对话绑定冲突 | 先备份、处理旧待办，再按第 4 节切换 |
+| 对话被占用 / `active writer` | 按第 4 节释放其他 Codex / Bridge 对该对话的占用，再点击“恢复连接”；不要删除锁或用“新开跑团会话”绕过占用 |
 
 当前不提供远程 Bridge 地址、自定义 `@familiar` 前缀、开机自启或 Windows 安装包。

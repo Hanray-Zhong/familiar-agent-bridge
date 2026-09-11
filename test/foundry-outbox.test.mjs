@@ -118,3 +118,108 @@ test('队列满时保存补投缺口，后来的普通聊天不能掩盖漏收�
   assert.equal(saved.pending[0].event.id, 'B');
   await box.stop();
 });
+
+test('玩家状态跟随持久化回执，从排队到回答再到完成；暂停恢复保留原请求', async () => {
+  let saved = emptyOutbox(), time = 1, receipt = 'queued', paused = false;
+  const updates = [];
+  const box = new Outbox({ read: () => saved, write: async state => { saved = state; }, clock: () => time,
+    onStatus: async (id, status) => {
+      assert.equal(saved.pending.length, 0, '提示必须在 ACK 落盘后发布');
+      if (status === 'processed') assert.ok(saved.recent.includes(id));
+      updates.push(status);
+    },
+    post: async (path, body) => path === ROUTES.events ? { id: body.event.id, status: 'queued' }
+      : { ready: !paused, paused, receipts: body.ids.map(id => ({ id, status: receipt })) } });
+  await box.load();
+  await box.observe({ id: 'A', timestamp: new Date().toISOString() }, 1);
+  await box.pump();
+  time += 2000; paused = true;
+  await box.pump();
+  time += 2000; paused = false; receipt = 'running';
+  await box.pump();
+  time += 2000; receipt = 'processed';
+  await box.pump();
+  assert.deepEqual(updates, ['queued', 'paused', 'running', 'processed']);
+  assert.deepEqual(saved.watching, []);
+  await box.stop();
+});
+
+test('状态查询断线和结果不确定都会通知玩家，但不重发已接收的事件', async () => {
+  for (const receipt of ['uncertain', 'cancelled', 'unknown']) {
+    let saved = emptyOutbox(), time = 1, offline = true, eventPosts = 0;
+    const updates = [];
+    const box = new Outbox({ read: () => saved, write: async state => { saved = state; }, clock: () => time,
+      onStatus: async (_id, status) => { updates.push(status); },
+      post: async (path, body) => {
+        if (path === ROUTES.events) { eventPosts++; return { id: body.event.id, status: 'running' }; }
+        if (offline) throw new Error('offline');
+        return { receipts: body.ids.map(id => ({ id, status: receipt })) };
+      } });
+    await box.load();
+    await box.observe({ id: 'A', timestamp: new Date().toISOString() }, 1);
+    await box.pump();
+    assert.deepEqual(updates, ['disconnected']);
+    offline = false; time += 2000;
+    await box.retry(); await box.pump();
+    assert.deepEqual(updates, ['disconnected', receipt]);
+    assert.equal(eventPosts, 1);
+    assert.equal(saved.pending.length, 0);
+    await box.stop();
+  }
+});
+
+test('投递失败提示重试待发消息，手动重试只复用原消息 ID', async () => {
+  let saved = emptyOutbox(), offline = true;
+  const updates = [], ids = [];
+  const box = new Outbox({ read: () => saved, write: async state => { saved = state; },
+    onStatus: async (id, status) => { updates.push([id, status]); },
+    post: async (_path, body) => {
+      ids.push(body.event.id);
+      if (offline) throw Object.assign(new Error('pairing mismatch'), { retryable: false });
+      return { id: body.event.id, status: 'processed' };
+    } });
+  await box.load();
+  await box.observe({ id: 'A', timestamp: new Date().toISOString() }, 1);
+  await box.pump();
+  assert.deepEqual(updates, [['A', 'delivery-failed']]);
+  offline = false;
+  await box.retry(); await box.pump();
+  assert.deepEqual(ids, ['A', 'A']);
+  assert.deepEqual(updates.at(-1), ['A', 'processed']);
+  await box.stop();
+});
+
+test('玩家提示写入失败不会改变 ACK、阻塞投递或重放，终态提示可独立重试', async () => {
+  let saved = emptyOutbox(), fail = true, eventPosts = 0;
+  const updates = [];
+  const box = new Outbox({ read: () => saved, write: async state => { saved = state; },
+    onStatus: async (id, status) => { if (fail) throw new Error('Foundry update failed'); updates.push([id, status]); },
+    post: async (_path, body) => { eventPosts++; return { id: body.event.id, status: 'processed' }; } });
+  await box.load();
+  await box.observe({ id: 'A', timestamp: new Date().toISOString() }, 1);
+  await box.pump();
+  assert.deepEqual(saved.pending, []);
+  assert.deepEqual(saved.recent, ['A']);
+  assert.equal(saved.blocked, false);
+  fail = false;
+  await box.pump();
+  assert.equal(eventPosts, 1);
+  assert.deepEqual(updates, [['A', 'processed']]);
+  await box.stop();
+});
+
+test('缺少、重复、无关或非法的状态回执按断线提示处理，不错误地结束请求', async () => {
+  for (const receipts of [[], [{ id: 'B', status: 'processed' }], [{ id: 'A', status: 'invalid' }],
+    [{ id: 'A', status: 'processed' }, { id: 'A', status: 'processed' }], [null]]) {
+    let saved = emptyOutbox();
+    saved.watching = ['A'];
+    const updates = [];
+    const box = new Outbox({ read: () => saved, write: async state => { saved = state; },
+      onStatus: async (id, status) => { updates.push([id, status]); }, post: async () => ({ receipts }) });
+    await box.load(); await box.pump();
+    assert.deepEqual(saved.watching, ['A']);
+    assert.deepEqual(saved.recent, []);
+    assert.deepEqual(updates, [['A', 'disconnected']]);
+    await box.stop();
+  }
+});
