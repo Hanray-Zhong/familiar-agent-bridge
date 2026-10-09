@@ -63,7 +63,7 @@ test('并发请求合并为一条提示，完成一条不会清掉另一条的�
 
 test('异常提示指导核对后重试；取消可重新发送；终态不保留正在回答提示', async () => {
   for (const [status, pattern] of [
-    ['uncertain', /可能已部分执行.*核对.*重试未完成/], ['unknown', /确认未执行后再重试/],
+    ['uncertain', /可能已部分执行.*Desktop.*AI 核对.*重试未完成/], ['unknown', /Desktop.*确认未执行后再重试/],
     ['cancelled', /已取消.*重新发送 @familiar/], ['delivery-failed', /重试待发消息/],
     ['disconnected', /检查连接.*确认未执行后再重试/], ['paused', /仍在排队/],
   ]) {

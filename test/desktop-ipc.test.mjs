@@ -76,7 +76,10 @@ test('preload 只暴露固定业务操作；不把 IPC event 传给 renderer', a
   } });
   assert.equal(api.invoke, undefined); assert.equal(api.send, undefined); assert.equal(api.require, undefined);
   await api.start('manual'); assert.equal(requests[0].channel, 'bridge:start');
-  await api.exportModule(); assert.equal(requests[1].channel, 'bridge:export-module');
+  await api.reviewMessage({ id: 'A', text: '核对' }); assert.equal(requests[1].channel, 'bridge:review-message');
+  await api.reviewResolved({ id: 'A', resolved: true }); assert.equal(requests[2].channel, 'bridge:review-resolved');
+  await api.gmMessage('切换场景'); assert.equal(requests[3].channel, 'bridge:gm-message');
+  await api.exportModule(); assert.equal(requests[4].channel, 'bridge:export-module');
   let delivered;
   const dispose = api.onChange((...args) => { delivered = args; });
   ipc.emit('bridge:changed', { secretEvent: true }); assert.deepEqual(delivered, []);

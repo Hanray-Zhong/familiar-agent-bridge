@@ -49,6 +49,25 @@ test('真实 HTTP + 浏览器 WebCrypto 双向签名，ACK 落盘、状态查询
   assert.equal(status.receipts[0].status, 'processed');
 });
 
+test('只读状态测试验证签名及世界 / GM 身份后才通知桌面，不提交玩家请求', async t => {
+  const { pair, source, store } = await setup(t);
+  let verified = 0; source.on('verified', () => { verified++; });
+  for (const [payload, headers] of [
+    [{ ids: [] }, { 'X-Bridge-Signature': '0'.repeat(64) }],
+    [{ ids: [], worldId: 'another-world' }, {}],
+    [{ ids: [], relayUserId: 'another-gm' }, {}],
+    [{ ids: ['invalid-id'] }, {}],
+  ]) {
+    const response = await fetch(pair.bridgeUrl + ROUTES.status, request(pair, ROUTES.status, payload, headers));
+    assert.ok(response.status >= 400); await response.text();
+    assert.equal(verified, 0);
+  }
+  const result = await signedPost(pair, ROUTES.status, { ids: [] });
+  assert.equal(result.ready, true);
+  assert.equal(verified, 1);
+  assert.equal(store.snapshot().queued.length, 0);
+});
+
 test('跨重启、超过普通回执窗口也不重放 Foundry ID，改内容返回冲突', async t => {
   const { pair, source, store, event, dir } = await setup(t);
   await signedPost(pair, ROUTES.events, { event });

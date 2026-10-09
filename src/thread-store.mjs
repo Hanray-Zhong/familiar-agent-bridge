@@ -1,19 +1,27 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { writeAtomicJson } from './storage/atomic-json.mjs';
 import { admitFoundryEvent, recordFoundryStatus } from './storage/foundry-receipts.mjs';
 
 const now = () => new Date().toISOString();
 const initialState = () => ({
   version: 1, threadId: null, sessionStartedAt: null, world: null,
-  lastProcessedMessageId: null, receipts: [], queued: [], inFlight: null, foundryReceipts: {},
+  lastProcessedMessageId: null, receipts: [], queued: [], inFlight: null, foundryReceipts: {}, gmConversation: { messages: [] },
 });
 
 function validate(state) {
+  const validMessages = messages => Array.isArray(messages) && messages.every(message => typeof message?.id === 'string' &&
+    ['gm', 'assistant', 'system'].includes(message.role) && typeof message.text === 'string' && typeof message.at === 'string');
+  const validReview = review => review === undefined || (review &&
+    (review.resolvedAt === null || review.resolvedAt === undefined || typeof review.resolvedAt === 'string') &&
+    validMessages(review.messages));
+  const validConversation = conversation => conversation === undefined || (conversation && validMessages(conversation.messages));
   if (!state || state.version !== 1 || !Array.isArray(state.queued) || !Array.isArray(state.receipts) ||
       (state.foundryReceipts !== undefined && (!state.foundryReceipts || typeof state.foundryReceipts !== 'object' || Array.isArray(state.foundryReceipts))) ||
       !(state.threadId === null || typeof state.threadId === 'string') ||
       !state.queued.every(event => typeof event?.id === 'string' && typeof event?.text === 'string') ||
-      !state.receipts.every(receipt => typeof receipt?.id === 'string' && typeof receipt?.status === 'string') ||
+      !state.receipts.every(receipt => typeof receipt?.id === 'string' && typeof receipt?.status === 'string' && validReview(receipt.review)) ||
+      !validConversation(state.gmConversation) ||
       !(state.inFlight === null || typeof state.inFlight?.event?.id === 'string')) {
     throw new Error('state.json 格式错误；保留原文件，拒绝悄悄创建新 Session');
   }
@@ -34,10 +42,30 @@ export class ThreadStore {
     }
     validate(this.state);
     this.state.foundryReceipts ??= {};
-    if (this.state.inFlight) {
+    this.state.gmConversation ??= { messages: [] };
+    const interruptedGmRequest = this.state.gmConversation.messages.at(-1)?.role === 'gm';
+    const interruptedReviews = this.state.receipts.filter(receipt => receipt.status === 'uncertain' && !receipt.review?.resolvedAt &&
+      receipt.review?.messages.at(-1)?.role === 'gm').map(receipt => receipt.id);
+    if (this.state.inFlight || interruptedGmRequest || interruptedReviews.length) {
       await this.update(state => {
-        this.receipt(state, state.inFlight.event.id, 'uncertain');
-        state.inFlight = null;
+        if (state.inFlight) {
+          this.receipt(state, state.inFlight.event.id, 'uncertain', null, {
+            event: state.inFlight.event,
+            failure: { code: 'INTERRUPTED', message: 'Bridge 上次退出时请求仍在执行，结果无法确认' },
+          });
+          state.inFlight = null;
+        }
+        if (interruptedGmRequest) {
+          state.gmConversation.messages.push({ id: randomUUID(), role: 'system', at: now(),
+            text: '上次 GM 控制台请求在收到 AI 最终答复前中断，期间操作可能部分生效。请从当前世界状态继续核对，不要直接重放。' });
+          state.gmConversation.messages = state.gmConversation.messages.slice(-200);
+        }
+        for (const id of interruptedReviews) {
+          const receipt = state.receipts.find(item => item.id === id);
+          receipt.review.messages.push({ id: randomUUID(), role: 'system', at: now(),
+            text: '上次审核请求在收到 AI 最终答复前中断，期间操作可能部分生效。请从当前世界状态继续核对，不要直接重放。' });
+          receipt.review.messages = receipt.review.messages.slice(-100);
+        }
       });
     }
     return this.snapshot();
@@ -63,10 +91,17 @@ export class ThreadStore {
     return operation;
   }
 
-  receipt(state, id, status, turnId = null) {
+  receipt(state, id, status, turnId = null, details = {}) {
     recordFoundryStatus(state, id, status, turnId);
+    const previous = state.receipts.find(receipt => receipt.id === id);
     state.receipts = state.receipts.filter(receipt => receipt.id !== id);
-    state.receipts.push({ id, status, turnId, at: now() });
+    const receipt = { id, status, turnId, at: now() };
+    if (status === 'uncertain') {
+      receipt.event = details.event ?? previous?.event ?? null;
+      receipt.failure = details.failure ?? previous?.failure ?? null;
+      receipt.review = previous?.review ?? { resolvedAt: null, messages: [] };
+    }
+    state.receipts.push(receipt);
     state.receipts = state.receipts.slice(-this.historyLimit);
   }
 
@@ -91,12 +126,57 @@ export class ThreadStore {
     });
   }
 
-  finish(id, status, turnId = null) {
+  finish(id, status, turnId = null, details = {}) {
     return this.update(state => {
       if (state.inFlight?.event.id !== id) throw new Error('事件与 inFlight 记录不匹配');
-      this.receipt(state, id, status, turnId);
+      this.receipt(state, id, status, turnId, { ...details, event: state.inFlight.event });
       if (status === 'processed') state.lastProcessedMessageId = id;
       state.inFlight = null;
+    });
+  }
+
+  reviewIssue(id) {
+    const receipt = this.state.receipts.find(item => item.id === id && item.status === 'uncertain');
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  addReviewMessage(id, role, text, { turnId = null } = {}) {
+    if (!['gm', 'assistant', 'system'].includes(role) || typeof text !== 'string' || !text.trim() || text.length > 64000) {
+      throw new Error('审核消息无效');
+    }
+    return this.update(state => {
+      const receipt = state.receipts.find(item => item.id === id && item.status === 'uncertain');
+      if (!receipt) throw new Error('待审核项不存在');
+      receipt.review ??= { resolvedAt: null, messages: [] };
+      if (receipt.review.resolvedAt) throw new Error('该审核项已解决；请先重新打开');
+      const message = { id: randomUUID(), role, text: text.trim(), at: now(), ...(turnId ? { turnId } : {}) };
+      receipt.review.messages.push(message);
+      receipt.review.messages = receipt.review.messages.slice(-100);
+      return message;
+    });
+  }
+
+  setReviewResolved(id, resolved) {
+    return this.update(state => {
+      const receipt = state.receipts.find(item => item.id === id && item.status === 'uncertain');
+      if (!receipt) throw new Error('待审核项不存在');
+      receipt.review ??= { resolvedAt: null, messages: [] };
+      receipt.review.resolvedAt = resolved ? now() : null;
+    });
+  }
+
+  gmMessages() { return structuredClone(this.state.gmConversation?.messages ?? []); }
+
+  addGmMessage(role, text, { turnId = null } = {}) {
+    if (!['gm', 'assistant', 'system'].includes(role) || typeof text !== 'string' || !text.trim() || text.length > 64000) {
+      throw new Error('GM 控制台消息无效');
+    }
+    return this.update(state => {
+      state.gmConversation ??= { messages: [] };
+      const message = { id: randomUUID(), role, text: text.trim(), at: now(), ...(turnId ? { turnId } : {}) };
+      state.gmConversation.messages.push(message);
+      state.gmConversation.messages = state.gmConversation.messages.slice(-200);
+      return message;
     });
   }
 
@@ -127,6 +207,7 @@ export class ThreadStore {
       state.threadId = null;
       state.sessionStartedAt = null;
       state.world = null;
+      state.gmConversation = { messages: [] };
     });
   }
 }

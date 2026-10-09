@@ -1,9 +1,10 @@
-import { $, buildFields, fillSettings, fillPairing, formValues, render, modelOptions, effortOptions, renderThreads, scrollLogsToBottom, selectLogTab } from './render.mjs';
+import { $, buildFields, fillSettings, fillPairing, formValues, render, modelOptions, effortOptions, renderThreads, renderReviews, renderGmConversation, scrollLogsToBottom, selectLogTab } from './render.mjs';
 const api = globalThis.bridge;
 let state, built = false, dirty = false, pairDirty = false, rulesDirty = false, rulesLoaded = false, refreshing, pendingRefresh = false;
-let lastProfile, lastPairing, lastModels, lastThreads, toastTimer;
+let lastProfile, lastPairing, lastModels, lastThreads, selectedReviewId, toastTimer;
 const pages = { overview: ['跑团控制台', '连接你的世界，让每一次冒险有序展开。'], connection: ['连接设置', '关联已有环境，完成世界与中继 GM 的配对。'],
-  agent: ['对话与模型', '为这一场冒险选择合适的 AI DM。'], rules: ['主持规则', '把桌规和叙事偏好，交给你的 AI 主持。'], help: ['使用帮助', '几步准备，让故事开始。'] };
+  gm: ['GM 控制台', '在特殊情况下直接让 AI 核对并调整世界。'], review: ['待审核', '直接与 AI 核对不确定的游戏结果。'], agent: ['对话与模型', '为这一场冒险选择合适的 AI DM。'],
+  rules: ['主持规则', '把桌规和叙事偏好，交给你的 AI 主持。'], help: ['使用帮助', '几步准备，让故事开始。'] };
 
 function toast(message, error = false) {
   clearTimeout(toastTimer); $('toast').hidden = false; $('toast').classList.toggle('error', error); $('toast').textContent = message;
@@ -11,6 +12,7 @@ function toast(message, error = false) {
 }
 function markDirty() { dirty = true; $('page-title').classList.add('is-dirty'); }
 function selectThread(id) { $('thread-id').value = id; markDirty(); renderThreads(state, selectThread); }
+function selectReview(id) { selectedReviewId = id; selectedReviewId = renderReviews(state, selectedReviewId, selectReview); }
 
 async function refresh() {
   if (refreshing) { pendingRefresh = true; return refreshing; }
@@ -27,6 +29,8 @@ async function refresh() {
     const pairingSignature = JSON.stringify(state.pairing);
     if (!pairDirty && pairingSignature !== lastPairing) { fillPairing(state.pairing); lastPairing = pairingSignature; }
     render(state);
+    renderGmConversation(state);
+    selectedReviewId = renderReviews(state, selectedReviewId, selectReview);
     const threadsSignature = JSON.stringify([state.threads, state.busy, state.status.phase]);
     if (threadsSignature !== lastThreads) { renderThreads(state, selectThread); lastThreads = threadsSignature; }
   })();
@@ -43,7 +47,8 @@ async function act(operation, success) {
 
 async function navigate(page) {
   for (const section of document.querySelectorAll('.page')) section.hidden = section.id !== `page-${page}`;
-  for (const button of document.querySelectorAll('.nav-item')) button.classList.toggle('active', button.dataset.page === page);
+  for (const button of document.querySelectorAll('.nav-item')) button.classList.toggle('active', button.dataset.page === page ||
+    (page === 'review' && button.dataset.page === 'overview'));
   $('page-title').textContent = pages[page][0]; $('page-description').textContent = pages[page][1];
   if (page === 'overview') scrollLogsToBottom();
   window.scrollTo(0, 0);
@@ -77,7 +82,8 @@ $('start').addEventListener('click', () => act(async () => {
 }));
 $('stop').addEventListener('click', () => act(() => api.stop(), 'Bridge 已停止，待办已保存。'));
 $('recover').addEventListener('click', () => act(() => api.recover()));
-$('doctor').addEventListener('click', () => act(async () => {
+for (const button of document.querySelectorAll('[data-test-connection]')) button.addEventListener('click', () => act(async () => {
+  if (dirty || pairDirty || rulesDirty) throw new Error('请先保存设置、配对和主持规则，再执行只读测试。');
   const result = await api.doctor(); if (result) toast(`只读验证通过：${result.name}`);
 }));
 $('detect-codex').addEventListener('click', () => act(async () => { const command = await api.detectCodex(); document.querySelector('[data-config="CODEX_COMMAND"]').value = command; lastProfile = null; }, '已找到并保存 Codex 程序路径。'));
@@ -112,6 +118,18 @@ $('save-rules').addEventListener('click', () => act(async () => {
 $('message-form').addEventListener('submit', event => { event.preventDefault(); void act(async () => {
   await api.sendMessage($('message').value); $('message').value = '';
 }, '请求已进入队列。'); });
+$('gm-form').addEventListener('submit', event => { event.preventDefault(); void act(async () => {
+  await api.gmMessage($('gm-message').value); $('gm-message').value = '';
+}, 'AI 已完成本轮 GM 要求。'); });
+$('review-form').addEventListener('submit', event => { event.preventDefault(); void act(async () => {
+  if (!selectedReviewId) throw new Error('请先选择待审核项');
+  await api.reviewMessage({ id: selectedReviewId, text: $('review-message').value }); $('review-message').value = '';
+}, 'AI 已完成本轮核对。'); });
+$('review-resolve').addEventListener('click', () => { void act(async () => {
+  const issue = state.reviewIssues.find(item => item.id === selectedReviewId);
+  if (!issue) throw new Error('待审核项不存在');
+  await api.reviewResolved({ id: issue.id, resolved: !issue.resolvedAt });
+}, '审核状态已更新。'); });
 $('open-manual').addEventListener('click', () => act(() => api.reveal('manual')));
 $('open-data').addEventListener('click', () => act(() => api.reveal('data')));
 

@@ -38,7 +38,45 @@ test('崩溃中的事件标记 uncertain，拒绝自动重放', async t => {
   const state = await next.load();
   assert.equal(state.inFlight, null);
   assert.equal(state.receipts[0].status, 'uncertain');
+  assert.equal(state.receipts[0].event.text, '骰子可能已掷出');
+  assert.equal(state.receipts[0].failure.code, 'INTERRUPTED');
   assert.equal(await next.enqueue({ id: 'A', text: 'again' }), false);
+});
+
+test('待审核项持久化原请求、失败摘要和 GM/AI 对话，并可关闭后重新打开', async t => {
+  const { store, file } = await setup(t);
+  await store.enqueue({ id: 'A', player: 'Alice', text: '消耗法术位并开门', timestamp: '2026-01-01T00:00:00.000Z', metadata: { source: 'desktop' } });
+  await store.begin('A');
+  await store.finish('A', 'uncertain', null, { failure: { code: 'DISCONNECTED', message: '连接中断' } });
+  await store.addReviewMessage('A', 'gm', '请核对法术位');
+  await store.addReviewMessage('A', 'assistant', '法术位没有减少。', { turnId: 'review-turn' });
+  await store.setReviewResolved('A', true);
+
+  const receipt = (await new ThreadStore(file).load()).receipts[0];
+  assert.equal(receipt.event.text, '消耗法术位并开门');
+  assert.deepEqual(receipt.failure, { code: 'DISCONNECTED', message: '连接中断' });
+  assert.deepEqual(receipt.review.messages.map(message => [message.role, message.text]),
+    [['gm', '请核对法术位'], ['assistant', '法术位没有减少。']]);
+  assert.ok(receipt.review.resolvedAt);
+  await assert.rejects(store.addReviewMessage('A', 'gm', '继续'), /重新打开/);
+  await store.setReviewResolved('A', false);
+  await store.addReviewMessage('A', 'gm', '继续');
+  assert.equal(store.reviewIssue('A').review.messages.length, 3);
+});
+
+test('GM 控制台对话跨重启保存，中断时追加警告，新开跑团会话时清空', async t => {
+  const { store, file } = await setup(t);
+  await store.addGmMessage('gm', '切换场景并重新布置');
+  const restarted = new ThreadStore(file);
+  let state = await restarted.load();
+  assert.deepEqual(state.gmConversation.messages.map(message => message.role), ['gm', 'system']);
+  assert.match(state.gmConversation.messages[1].text, /可能部分生效.*不要直接重放/);
+  await restarted.addGmMessage('gm', '请先核对当前场景');
+  await restarted.addGmMessage('assistant', '已经核对。', { turnId: 'gm-turn' });
+  state = await new ThreadStore(file).load();
+  assert.equal(state.gmConversation.messages.at(-1).turnId, 'gm-turn');
+  await restarted.reset();
+  assert.deepEqual(restarted.gmMessages(), []);
 });
 
 test('坏 JSON 不覆盖；World 切换不复用旧 Thread；重置保留去重', async t => {

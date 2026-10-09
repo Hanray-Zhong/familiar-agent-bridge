@@ -31,9 +31,10 @@ async function fixture(t) {
     async stop() { trace.push('source:stop'); }
   }
   const logger = Object.fromEntries(['info', 'debug', 'warn', 'error'].map(name => [name, () => {}]));
-  const session = new DesktopSession(config, logger, () => {}, { BridgeClass, SourceClass, readPairing: async () => ({ worldId: 'world' }) });
+  let changes = 0;
+  const session = new DesktopSession(config, logger, () => { changes++; }, { BridgeClass, SourceClass, readPairing: async () => ({ worldId: 'world' }) });
   t.after(async () => { await session.stop(); await rm(root, { recursive: true, force: true }); });
-  return { session, config, trace, codex, SourceClass, health, maximum: () => maximum };
+  return { session, config, trace, codex, SourceClass, health, maximum: () => maximum, changes: () => changes };
 }
 
 test('桌面先完成监听再处理已保存的队列，所有 Turn 仍串行', async t => {
@@ -45,6 +46,21 @@ test('桌面先完成监听再处理已保存的队列，所有 Turn 仍串行',
   assert.deepEqual(f.trace.filter(value => /^(?:start|end):/.test(value)), ['start:A', 'end:A', 'start:B', 'end:B', 'start:C', 'end:C']);
   assert.equal(f.maximum(), 1); assert.equal(f.session.status().phase, 'running');
   await f.session.stop(); assert.equal(f.codex.child, null); assert.equal(f.session.phase, 'stopped');
+});
+
+test('监听启动不等于 GM 推送测试通过，只有验证请求会更新测试凭据', async t => {
+  const f = await fixture(t);
+  await f.session.start();
+  assert.equal(f.session.status().mode, 'foundry');
+  assert.equal(f.session.status().codexConnected, true);
+  assert.equal(f.session.status().listening, true);
+  assert.equal(f.session.status().relayVerifiedAt, null);
+  const before = f.changes();
+  f.session.source.emit('verified');
+  assert.ok(f.session.status().relayVerifiedAt);
+  assert.equal(f.changes(), before + 1);
+  await f.session.stop(); await f.session.start();
+  assert.equal(f.session.status().relayVerifiedAt, null);
 });
 
 test('桌面会话转发真实 Bridge 的回答事件，兼容只在 Turn 汇总中出现的回答', async t => {
@@ -62,6 +78,14 @@ test('桌面会话转发真实 Bridge 的回答事件，兼容只在 Turn 汇总
   assert.equal(responses.length, 1);
   assert.equal(responses[0].eventId, 'reply');
   assert.equal(responses[0].text, '来自实际结果集合的回答');
+});
+
+test('Bridge 持久化 Desktop 对话消息后通知 renderer 刷新', async t => {
+  const fixtureValue = await fixture(t);
+  await fixtureValue.session.start({ mode: 'manual' });
+  const before = fixtureValue.changes();
+  fixtureValue.session.bridge.emit('change');
+  assert.equal(fixtureValue.changes(), before + 1);
 });
 
 test('连接尚未完成就停止时不消费旧消息、不启动监听，保留待办', async t => {

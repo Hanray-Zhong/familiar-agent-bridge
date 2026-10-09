@@ -93,7 +93,7 @@ export class Outbox {
           state.recent = state.recent.slice(-500);
         });
         this.report(result.id, result.status);
-        if (result.status === 'uncertain') this.notify('存在结果待核对的请求，不会自动重发');
+        if (result.status === 'uncertain') this.notify('存在结果待核对的请求，请在 Desktop“待审核”中处理；不会自动重发');
       } catch (error) {
         await this.mutate(state => {
           const current = state.pending.find(item => item.event.id === first.event.id);
@@ -126,7 +126,7 @@ export class Outbox {
         for (const receipt of result.receipts) {
           this.report(receipt.id, receipt.status === 'queued' && (result.paused || result.ready === false) ? 'paused' : receipt.status);
         }
-        if (finished.some(receipt => receipt.status === 'uncertain')) this.notify('有请求的执行结果不确定，请 GM 核对；不会自动重发');
+        if (finished.some(receipt => receipt.status === 'uncertain')) this.notify('有请求的执行结果不确定，请 GM 在 Desktop“待审核”中处理；不会自动重发');
         if (result.receipts.some(receipt => receipt.status === 'unknown')) this.notify('Bridge 缺少已接收请求的记录，请 GM 核对状态文件；不会自动重放');
       } catch {
         for (const id of ids) this.report(id, 'disconnected');

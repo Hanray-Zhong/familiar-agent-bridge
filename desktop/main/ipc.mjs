@@ -2,7 +2,8 @@ import { join } from 'node:path';
 import { redact } from '../../src/runtime/logger.mjs';
 
 export const channels = ['snapshot', 'save-settings', 'detect-codex', 'check-environment', 'models', 'threads',
-  'start', 'stop', 'recover', 'doctor', 'send-message', 'pairing', 'rules', 'save-rules', 'reset', 'choose', 'reveal', 'export-module'];
+  'start', 'stop', 'recover', 'doctor', 'send-message', 'review-message', 'review-resolved', 'gm-message', 'pairing', 'rules', 'save-rules',
+  'reset', 'choose', 'reveal', 'export-module'];
 
 export function validateSender(event, window, uiUrl) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== uiUrl) {
@@ -43,6 +44,8 @@ export function registerIpc({ ipcMain, dialog, shell, controller, getWindow, uiU
     'detect-codex': () => controller.detectCodex(), 'check-environment': () => controller.checkEnvironment(), models: () => controller.fetchModels(),
     threads: query => controller.fetchThreads(query), start: mode => controller.start(mode), stop: () => controller.stop(),
     recover: () => controller.recover(), doctor: () => controller.doctor(), 'send-message': text => controller.sendMessage(text),
+    'review-message': value => controller.reviewMessage(value), 'review-resolved': value => controller.setReviewResolved(value),
+    'gm-message': text => controller.gmMessage(text),
     pairing: async values => {
       if (values?.rotate && !await confirm('将生成新的配对密钥。保存后需要在指定 GM 的 Foundry 页面重新导入配对文件。')) return null;
       return controller.configurePairing(values);

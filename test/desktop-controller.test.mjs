@@ -60,6 +60,46 @@ test('桌面手工请求使用配置的玩家名称并生成独立事件 ID', as
   assert.ok(events.every(event => event.text === '我检查门' && event.type === 'player-message'));
 });
 
+test('桌面将审核对话交给当前跑团 Session，并允许在停止时重新打开记录', async t => {
+  const { controller, config } = await fixture(t);
+  const calls = [];
+  await assert.rejects(controller.reviewMessage({ id: 'A', text: '请核对' }), /请先启动/);
+  controller.session = { activated: true, bridge: {
+    requestReview: async (id, text) => { calls.push(['review', id, text]); return '已核对'; },
+    setReviewResolved: async (id, resolved) => calls.push(['resolved', id, resolved]),
+  }, stop: async () => {} };
+  assert.equal(await controller.reviewMessage({ id: 'A', text: '请核对' }), '已核对');
+  await controller.setReviewResolved({ id: 'A', resolved: true });
+  assert.deepEqual(calls, [['review', 'A', '请核对'], ['resolved', 'A', true]]);
+
+  controller.session = null;
+  const store = new ThreadStore(config.stateFile); await store.load();
+  await store.enqueue({ id: 'B', text: '旧请求' }); await store.begin('B'); await store.finish('B', 'uncertain');
+  await controller.setReviewResolved({ id: 'B', resolved: true });
+  const snapshot = await controller.snapshot();
+  assert.equal(snapshot.reviewIssues[0].resolvedAt !== null, true);
+  assert.equal(snapshot.status.uncertain, 0);
+});
+
+test('桌面 GM 控制台把要求交给当前跑团 Session，并从状态快照返回历史', async t => {
+  const { controller, config } = await fixture(t);
+  await assert.rejects(controller.gmMessage('切换场景'), /请先启动/);
+  const calls = [];
+  controller.session = { activated: true, bridge: {
+    requestGmMessage: async text => { calls.push(text); return '已完成'; },
+  }, stop: async () => {} };
+  assert.equal(await controller.gmMessage('切换场景'), '已完成');
+  assert.deepEqual(calls, ['切换场景']);
+
+  controller.session = null;
+  const store = new ThreadStore(config.stateFile); await store.load();
+  await store.addGmMessage('gm', '重新布置 Token');
+  await store.addGmMessage('assistant', '布置完成', { turnId: 'gm-turn' });
+  const snapshot = await controller.snapshot();
+  assert.deepEqual(snapshot.gmMessages.map(message => message.role), ['gm', 'assistant']);
+  assert.equal(snapshot.gmMessages[1].turnId, 'gm-turn');
+});
+
 test('目录查询失败也关闭客户端并释放锁，不采用待修正的模型', async t => {
   let stopped = false;
   class Client {
@@ -103,4 +143,78 @@ test('只读检查沿用已有世界配对，尚未配对时允许查询当前�
   await controller.configurePairing({ worldId: 'world', relayUserId: 'gm', origins: 'http://localhost:30000', port: 3210 });
   await controller.doctor();
   assert.deepEqual(modes, ['manual', 'foundry']);
+});
+
+test('Codex 必须同时通过版本和 Familiar 配置检查，失败清除上次成功结果', async t => {
+  let result = { version: 'codex-cli 0.153.4', servers: [{ name: 'familiar', enabled: true }] };
+  const { controller } = await fixture(t, { inspect: async () => result });
+  await controller.checkEnvironment();
+  assert.equal((await controller.snapshot()).connections.codex.state, 'passed');
+  controller.connections.worldResult({ name: '旧世界' }, true);
+  result = { ...result, servers: [{ name: 'familiar', enabled: false }] };
+  await assert.rejects(controller.checkEnvironment(), /没有启用/);
+  let snapshot = await controller.snapshot();
+  assert.equal(snapshot.environment, null);
+  assert.equal(snapshot.connections.codex.state, 'failed');
+  assert.equal(snapshot.connections.world.state, 'untested');
+  result = { ...result, version: 'codex-cli 0.0.0' };
+  await assert.rejects(controller.checkEnvironment(), /需要已适配/);
+  snapshot = await controller.snapshot();
+  assert.equal(snapshot.connections.codex.state, 'failed');
+  assert.match(snapshot.connections.codex.message, /0.0.0/);
+});
+
+test('只读结果在 Session 停止后保留，配对文件自身不能完成世界验证', async t => {
+  let failure, readWorld = { id: 'world', name: '测试世界' };
+  class Session {
+    constructor() { this.phase = 'stopped'; this.bridge = { doctor: async () => { if (failure) throw failure; return readWorld; } }; }
+    async start({ inspectionOnly }) { assert.equal(inspectionOnly, true); this.phase = 'checking'; }
+    async stop() { this.phase = 'stopped'; }
+    status() { return { phase: this.phase, healthy: false }; }
+  }
+  const { controller, profile } = await fixture(t, { SessionClass: Session });
+  await controller.doctor();
+  assert.equal((await controller.snapshot()).connections.world.state, 'untested');
+  const pair = { worldId: 'world', relayUserId: 'gm', origins: 'http://localhost:30000', port: 3210 };
+  await controller.configurePairing(pair);
+  assert.equal((await controller.snapshot()).connections.world.state, 'untested');
+  await controller.doctor();
+  let snapshot = await controller.snapshot();
+  assert.equal(snapshot.status.phase, 'stopped');
+  assert.equal(snapshot.connections.codex.state, 'passed');
+  assert.equal(snapshot.connections.world.state, 'passed');
+  assert.ok(snapshot.connections.world.checkedAt);
+  assert.equal(snapshot.connections.push.state, 'untested');
+  failure = new Error('世界暂时不可用');
+  await assert.rejects(controller.doctor(), /世界暂时不可用/);
+  assert.equal((await controller.snapshot()).connections.world.state, 'failed');
+  failure = null; readWorld = { id: 'another-world', name: '错误世界' };
+  await assert.rejects(controller.doctor(), /当前配对不一致/);
+  assert.equal((await controller.snapshot()).connections.world.state, 'failed');
+  readWorld = { id: 'world', name: '测试世界' }; await controller.doctor();
+  await controller.configurePairing({ ...pair, rotate: true });
+  assert.equal((await controller.snapshot()).connections.world.state, 'untested');
+  await controller.doctor();
+  await controller.saveSettings({ ...profile.data.values, CODEX_COMMAND: '/test/new-codex' });
+  snapshot = await controller.snapshot();
+  assert.ok(Object.values(snapshot.connections).every(check => check.state === 'untested'));
+});
+
+test('检查失败或取消后不显示通过，并继续执行会话清理', async t => {
+  let stopped = 0, failCleanup = true;
+  class Session {
+    constructor() { this.bridge = { doctor: async () => ({ id: 'world', name: '世界' }) }; }
+    async start() { this.phase = 'checking'; }
+    async stop() { stopped++; this.phase = 'stopped'; if (failCleanup) throw new Error('清理失败'); }
+    status() { return { phase: this.phase }; }
+  }
+  const { controller } = await fixture(t, { SessionClass: Session });
+  await assert.rejects(controller.doctor(), /清理失败/);
+  assert.equal((await controller.snapshot()).connections.world.state, 'failed');
+  assert.equal(stopped, 1);
+  failCleanup = false;
+  Session.prototype.start = async function () { this.stopRequested = true; };
+  await controller.doctor();
+  assert.equal(stopped, 2);
+  assert.ok(Object.values((await controller.snapshot()).connections).every(check => check.state === 'untested'));
 });

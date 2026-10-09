@@ -7,9 +7,9 @@ const warnings = {
   'delivery-failed': 'Familiar 请求发送异常。请 GM 检查连接后点击“重试待发消息”；玩家暂勿重复发送。',
   delayed: 'Familiar 待发请求较多，当前请求将稍后补投。请稍候，持续无回复时请 GM 检查并重试待发消息。',
   paused: 'Familiar 暂停回答，请 GM 恢复连接。请求仍在排队，无需重复发送。',
-  disconnected: 'Familiar 回答状态暂时无法确认。请 GM 检查连接和游戏结果，确认未执行后再重试，勿直接重复行动。',
-  uncertain: 'Familiar 回答异常，行动可能已部分执行。请先让 GM 核对聊天、掷骰和资源，再重试未完成的部分。',
-  unknown: 'Familiar 无法确认这条请求的处理结果。请 GM 核对记录，确认未执行后再重试。',
+  disconnected: 'Familiar 回答状态暂时无法确认。请 GM 检查连接，并在 Desktop“待审核”中让 AI 核对游戏结果；确认未执行后再重试，勿直接重复行动。',
+  uncertain: 'Familiar 回答异常，行动可能已部分执行。请 GM 打开 Desktop“待审核”，让 AI 核对聊天、掷骰和资源，再按结论重试未完成的部分。',
+  unknown: 'Familiar 无法确认这条请求的处理结果。请 GM 在 Desktop 检查运行记录和待审核项，确认未执行后再重试。',
   cancelled: 'Familiar 请求已取消。需要继续时，请重新发送 @familiar 请求。',
   rejected: 'Familiar 未转发这条请求。请检查消息长度；密语请 GM 核对接收者和用户名称，修正后重试。',
 };

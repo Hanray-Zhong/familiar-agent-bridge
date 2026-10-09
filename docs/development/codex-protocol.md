@@ -44,6 +44,10 @@ Turn 的权限字段为 `sandboxPolicy: {type: "readOnly", networkAccess: false}
 
 桌面回答页复用玩家 Turn 的 `onItem` 与完成后的 Item 集合，不解析系统日志。`agentMessage.text` 在 `phase === "final_answer"` 时展示，`phase` 缺失或为 `null` 时兼容展示；显式 `commentary` 和 `reasoning` 不收集。Familiar 的 `send-chat-message` / `send_chat_message` 仅在 `status === "completed"`、存在结果且无失败标记时，展示 `arguments.content` 并标为“Foundry 聊天”。两种来源分别保留，不能用模型最终文本推断已发送玩家聊天。只有完整 Item 进入回答页，不收集文本 delta；同一请求按 Item ID 去重，隔离其他 Thread 和旧 Turn 的通知。
 
+Desktop 审核同样通过 `turn/start` 写入原跑团 Thread，但 `clientUserMessageId` 使用审核消息自己的 UUID。审核提示把原玩家请求标为不可信数据，只把 `role=gm` 的 Desktop 消息作为当前 GM 指令；任意事件 metadata 不进入提示。审核必须在本轮 Item 中出现成功的 Familiar `get-world-info` 回执，最终只采用 `final_answer`（兼容缺失 phase）并写回审核记录。它不要求 `send-chat-message`，也不进入普通“AI 回答”内存缓冲。
+
+GM 控制台使用相同的 `turn/start`、独立消息 UUID 和 Item 守卫。它允许可信 GM 明确要求 Familiar 执行场景切换、Token 布置或资源修正，但仍要求本轮出现成功的 `get-world-info`，并禁止本机工具、非 Familiar MCP 和默认玩家 Chat。玩家 Turn、审核 Turn 与 GM 控制台 Turn 全部由同一 `TurnQueue` 串行化；不能直接绕过 Queue 调用 `runTurn`。
+
 模型传给 Thread 与 Turn 的 `model`。effort 在 Thread 中使用 `config.model_reasoning_effort`，在 Turn 中使用 `effort`。可用值来自 `model/list.supportedReasoningEfforts`，不要写死统一枚举。`src/codex/catalog.mjs` 统一维护模型分页和 `thread/list` 查询参数。
 
 ## MCP 和本机权限

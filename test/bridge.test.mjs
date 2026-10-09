@@ -110,6 +110,95 @@ test('完整 Bridge 串行执行、单条失败继续、持久化成功与失败
   assert.equal((await bridge.accept(event('B'))).accepted, false);
 });
 
+test('Desktop 待审核对话复用跑团 Thread、读取当前世界且不要求发送 Foundry Chat', async t => {
+  const { bridge, codex } = await setup(t);
+  await bridge.start();
+  codex.failId = 'A';
+  await bridge.accept({ ...event('A'), text: '消耗一个法术位并开门' });
+  await bridge.drain();
+  assert.equal(bridge.status().uncertain, 1);
+
+  let reviewPrompt;
+  codex.runTurn = async (threadId, prompt, { eventId }) => {
+    assert.equal(threadId, 'persistent-thread');
+    assert.match(eventId, /^[0-9a-f-]{36}$/);
+    reviewPrompt = prompt;
+    return { turn: { id: 'review-turn', status: 'completed' }, items: [
+      { id: 'world', type: 'mcpToolCall', server: 'familiar', tool: 'get-world-info', status: 'completed' },
+      { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '已核实：法术位未消耗，门仍关闭。\n本轮没有修改世界。' },
+    ] };
+  };
+  const answer = await bridge.requestReview('A', '请核对法术位和门的状态');
+  assert.match(reviewPrompt, /不要自动重放整条原请求/);
+  assert.match(reviewPrompt, /消耗一个法术位并开门/);
+  assert.match(answer, /法术位未消耗/);
+  const issue = bridge.store.reviewIssue('A');
+  assert.deepEqual(issue.review.messages.map(message => message.role), ['gm', 'assistant']);
+  assert.equal(issue.review.messages[1].turnId, 'review-turn');
+  await bridge.setReviewResolved('A', true);
+  assert.equal(bridge.status().uncertain, 0);
+  assert.equal(bridge.store.reviewIssue('A').status, 'uncertain', '关闭审核不能伪造原请求成功');
+  await bridge.setReviewResolved('A', false);
+  assert.equal(bridge.status().uncertain, 1);
+});
+
+test('审核 Turn 缺少真实世界读取时保留系统警告，不保存模型猜测', async t => {
+  const { bridge, codex } = await setup(t);
+  await bridge.start(); codex.failId = 'A';
+  await bridge.accept(event('A')); await bridge.drain();
+  codex.runTurn = async () => ({ turn: { id: 'guess', status: 'completed' }, items: [
+    { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '我猜已经完成。' },
+  ] });
+  await assert.rejects(bridge.requestReview('A', '请确认'), /没有实际读取/);
+  const messages = bridge.store.reviewIssue('A').review.messages;
+  assert.deepEqual(messages.map(message => message.role), ['gm', 'system']);
+  assert.doesNotMatch(messages[1].text, /我猜已经完成/);
+});
+
+test('GM 控制台复用跑团 Thread 并与玩家请求串行执行，保存完整对话记录', async t => {
+  const { bridge, codex } = await setup(t);
+  await bridge.start();
+  let active = 0, maximum = 0;
+  const prompts = [];
+  codex.runTurn = async (threadId, prompt, { eventId }) => {
+    assert.equal(threadId, 'persistent-thread');
+    active++; maximum = Math.max(maximum, active); prompts.push(prompt);
+    await delay(10); active--;
+    if (!prompt.startsWith('DESKTOP_GM_CONSOLE')) return { turn: { id: `turn-${eventId}`, status: 'completed' }, items: [
+      { id: `world-${eventId}`, type: 'mcpToolCall', server: 'familiar', tool: 'get-world-info', status: 'completed' },
+      { id: `chat-${eventId}`, type: 'mcpToolCall', server: 'familiar', tool: 'send-chat-message', status: 'completed' },
+    ] };
+    return { turn: { id: 'gm-turn', status: 'completed' }, items: [
+      { id: 'gm-world', type: 'mcpToolCall', server: 'familiar', tool: 'get-world-info', status: 'completed' },
+      { id: 'switch', type: 'mcpToolCall', server: 'familiar', tool: 'switch-scene', status: 'completed' },
+      { id: 'gm-answer', type: 'agentMessage', phase: 'final_answer', text: '已切回礼拜堂，并重新布置两枚 Token。' },
+    ] };
+  };
+  await bridge.accept(event('A'));
+  const answer = await bridge.requestGmMessage('场景切换乱了，请核对进度后切回正确场景并重新布置 Token');
+  assert.equal(maximum, 1);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /^DESKTOP_GM_CONSOLE/);
+  assert.match(answer, /已切回礼拜堂/);
+  assert.deepEqual(bridge.store.gmMessages().map(message => [message.role, message.text]), [
+    ['gm', '场景切换乱了，请核对进度后切回正确场景并重新布置 Token'],
+    ['assistant', '已切回礼拜堂，并重新布置两枚 Token。'],
+  ]);
+  assert.equal(bridge.store.gmMessages()[1].turnId, 'gm-turn');
+});
+
+test('GM 控制台拒绝没有真实世界读取的模型答复并保存中断提示', async t => {
+  const { bridge, codex } = await setup(t);
+  await bridge.start();
+  codex.runTurn = async () => ({ turn: { id: 'guess', status: 'completed' }, items: [
+    { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '场景大概已经切好了。' },
+  ] });
+  await assert.rejects(bridge.requestGmMessage('请切换场景'), /没有实际读取/);
+  const messages = bridge.store.gmMessages();
+  assert.deepEqual(messages.map(message => message.role), ['gm', 'system']);
+  assert.doesNotMatch(messages[1].text, /大概已经切好/);
+});
+
 test('离线时事件落盘但不调用 Agent，恢复后继续', async t => {
   const { bridge, codex, healthState } = await setup(t);
   healthState.ready = false;

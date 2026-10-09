@@ -11,6 +11,7 @@ export class DesktopSession {
   start({ mode = 'foundry', inspectionOnly = false } = {}) {
     if (this.starting || this.bridge) throw new Error('Bridge 已在运行或启动中');
     this.stopRequested = false;
+    this.mode = mode; this.relayVerifiedAt = null;
     this.phase = inspectionOnly ? 'checking' : 'starting';
     this.changed();
     this.starting = (async () => {
@@ -19,6 +20,7 @@ export class DesktopSession {
         const config = { ...this.config, ...(pairing ? { expectedWorldId: pairing.worldId } : {}), ...(inspectionOnly ? { readOnlyProbe: true } : {}) };
         this.bridge = new this.BridgeClass(config, this.logger);
         this.bridge.on('response', this.onResponse);
+        this.bridge.on('change', this.changed);
         this.bridge.on('ready', () => { if (!inspectionOnly && this.activated && !this.stopRequested) this.phase = 'running'; this.changed(); });
         this.bridge.on('paused', () => { if (this.activated && !this.stopRequested) this.phase = 'paused'; this.changed(); });
         // 先挂接并检查，端口监听完成后才允许旧待办执行。停止请求不会启动队列。
@@ -27,6 +29,7 @@ export class DesktopSession {
         if (pairing) {
           this.source = new this.SourceClass({ pairing, accept: event => this.bridge.accept(event), status: () => this.bridge.status(),
             receipts: ids => this.bridge.store.foundryStatuses(ids), logger: this.logger });
+          this.source.on('verified', () => { this.relayVerifiedAt = new Date().toISOString(); this.changed(); });
           this.source.on('failure', error => { this.logger.error('foundry', error.message); void this.stop().catch(e => this.logger.error('desktop', e.message)); });
           await this.source.start();
         }
@@ -68,6 +71,7 @@ export class DesktopSession {
 
   status() {
     if (!this.bridge?.store?.state) return { phase: this.phase, healthy: false, inFlight: null };
-    return { ...this.bridge.status(), phase: this.phase, listening: Boolean(this.source) };
+    return { ...this.bridge.status(), phase: this.phase, mode: this.mode, listening: Boolean(this.source), relayVerifiedAt: this.relayVerifiedAt,
+      codexConnected: Boolean(this.bridge.attached && this.bridge.codex?.connection && !this.bridge.codex.connection.closed) };
   }
 }

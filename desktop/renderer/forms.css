@@ -7,6 +7,13 @@
   justify-content:space-between;
   align-items:center;
   gap:20px}
+.codex-program-row{display:flex;align-items:center;gap:9px;margin-top:7px}
+.codex-program-row input{flex:1;margin:0}
+.codex-program-actions{display:flex;gap:8px;flex-shrink:0}
+.codex-program-row+small{display:block;margin-top:6px}
+@media(max-width:1250px){
+  .codex-program-row{flex-wrap:wrap}
+  .codex-program-row input{flex-basis:100%}}
   .import-banner strong{
     font-size:13px}
     .import-banner p{

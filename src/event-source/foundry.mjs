@@ -71,6 +71,7 @@ export class FoundryEventSource extends EventSource {
         const state = this.status();
         respond(response, 200, { protocol: 1, ready: state.healthy, paused: state.paused, queued: state.queued,
           receipts: this.receipts(body.ids) });
+        this.emit('verified');
         return;
       }
       const event = validateFoundryEvent(body.event, this.pairing);
@@ -80,6 +81,7 @@ export class FoundryEventSource extends EventSource {
       respond(response, result.accepted ? 202 : 200, { protocol: 1, id: event.id, accepted: result.accepted,
         status: receipt?.status ?? 'queued' });
       this.emit('accepted', { id: event.id, accepted: result.accepted });
+      this.emit('verified');
     } catch (error) {
       const status = error.status ?? (error.code === 'EVENT_CONFLICT' ? 409 : error.code === 'QUEUE_FULL' ? 429 : error.code === 'WORLD_CHANGED' ? 409 : 503);
       const code = error.code ?? 'TEMPORARILY_UNAVAILABLE';

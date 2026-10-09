@@ -10,6 +10,8 @@ import { threadOptions } from '../codex/policy.mjs';
 import { checkFamiliar, createGameItemGuard, verifyAgent } from './familiar-health.mjs';
 import { redact } from './logger.mjs';
 import { createResponseCollector } from './responses/collector.mjs';
+import { buildReviewTurnPrompt, pendingReviewCount } from './reviews.mjs';
+import { buildGmConsolePrompt, finalAgentAnswer } from './desktop-conversation.mjs';
 
 export class Bridge extends EventEmitter {
   constructor(config, logger, { codex, store, health = checkFamiliar } = {}) {
@@ -19,7 +21,7 @@ export class Bridge extends EventEmitter {
       for (const release of this.releases) await release.setRuntimePid(pid);
     } });
     this.store = store ?? new ThreadStore(config.stateFile, { maxQueued: config.queueLimit });
-    this.queue = new TurnQueue(event => this.processEvent(event), { maxSize: config.queueLimit });
+    this.queue = new TurnQueue(job => this.processJob(job), { maxSize: config.queueLimit });
     this.admission = Promise.resolve();
     this.releases = [];
     this.restarts = 0;
@@ -27,7 +29,7 @@ export class Bridge extends EventEmitter {
     this.stopping = false;
     this.manualPause = false;
     this.pauseReason = null;
-    this.queue.on('queued', event => logger.info('queue', 'queued message', { id: event.id }));
+    this.queue.on('queued', job => logger.info('queue', job.kind === 'review' ? 'queued review' : job.kind === 'gm-console' ? 'queued GM request' : 'queued message', { id: job.id }));
     this.codex.on('unavailable', error => {
       this.pause(error.message);
       void this.codex.stop().catch(cleanupError => this.fatal(cleanupError));
@@ -40,6 +42,12 @@ export class Bridge extends EventEmitter {
     });
   }
 
+  processJob(job) {
+    if (job.kind === 'review') return this.processReview(job);
+    if (job.kind === 'gm-console') return this.processGmMessage(job);
+    return this.processEvent(job);
+  }
+
   async start({ inspectionOnly = false } = {}) {
     this.inspectionOnly = inspectionOnly;
     this.releases.push(await acquireLock(this.config.lockFile));
@@ -48,8 +56,8 @@ export class Bridge extends EventEmitter {
     if (this.config.threadId && previous.threadId && this.config.threadId !== previous.threadId) {
       throw new Error('CODEX_THREAD_ID 与状态文件保存的对话不同；请先备份并处理旧待办，再在“对话与模型”新开跑团会话，最后选择目标对话');
     }
-    const uncertain = previous.receipts.filter(receipt => receipt.status === 'uncertain');
-    if (uncertain.length) this.logger.warn('state', '存在结果不确定的历史事件，请在 Foundry 核对；不会自动重放', { ids: uncertain.map(receipt => receipt.id) });
+    const uncertain = previous.receipts.filter(receipt => receipt.status === 'uncertain' && !receipt.review?.resolvedAt);
+    if (uncertain.length) this.logger.warn('state', '存在待审核的历史事件，可在 Desktop 与 AI 核对；不会自动重放', { ids: uncertain.map(receipt => receipt.id) });
     this.instructions = await readFile(this.config.instructionsFile, 'utf8');
     if (!inspectionOnly) for (const event of this.store.snapshot().queued) this.submit(event);
     await this.recover();
@@ -197,7 +205,129 @@ export class Bridge extends EventEmitter {
       this.logger.info('event', 'processed', { id: event.id });
     } catch (error) {
       if (error.code === 'STORE_FAILURE') { this.fatal(error); throw error; }
-      await this.store.finish(event.id, 'uncertain').catch(storeError => { this.fatal(storeError); throw storeError; });
+      await this.store.finish(event.id, 'uncertain', null, { failure: {
+        code: error.code ?? 'TURN_FAILED', message: redact(error.message).slice(0, 1000),
+      } }).catch(storeError => { this.fatal(storeError); throw storeError; });
+      if (['TURN_TIMEOUT', 'SECURITY_VIOLATION'].includes(error.code)) this.pause(error.message, true);
+      else if (['DISCONNECTED', 'FAMILIAR_UNAVAILABLE', 'REQUEST_TIMEOUT'].includes(error.code) || this.codex.connection?.closed) this.pause(error.message);
+      throw error;
+    }
+  }
+
+  async requestReview(id, text) {
+    if (typeof id !== 'string' || !id || typeof text !== 'string' || !text.trim() || text.length > 16000) {
+      throw new Error('审核问题不能为空且不能超过 16000 字符');
+    }
+    if (this.stopping || !this.healthy || this.queue.paused) throw new Error('Bridge 就绪后才能与 AI 处理待审核项');
+    const issue = this.store.reviewIssue(id);
+    if (!issue) throw new Error('待审核项不存在');
+    if (issue.review?.resolvedAt) throw new Error('该审核项已解决；请先重新打开');
+    let message;
+    try { message = await this.store.addReviewMessage(id, 'gm', text); }
+    catch (error) { if (error.code === 'STORE_FAILURE') this.fatal(error); throw error; }
+    this.emit('change');
+    try { return await this.queue.enqueue({ id: `review:${message.id}`, kind: 'review', issueId: id, messageId: message.id }); }
+    catch (error) {
+      if (this.store.reviewIssue(id)?.review?.messages.at(-1)?.id === message.id) {
+        await this.store.addReviewMessage(id, 'system', `审核请求未进入执行阶段：${redact(error.message).slice(0, 1000)}。本轮没有调用 AI。`)
+          .catch(storeError => { if (storeError.code === 'STORE_FAILURE') this.fatal(storeError); throw storeError; });
+        this.emit('change');
+      }
+      throw error;
+    }
+  }
+
+  async processReview(job) {
+    if (!this.healthy || this.stopping) throw new RetryLater('Bridge 尚未就绪');
+    try {
+      const { world } = await this.health(this.codex, this.threadId, { timeoutMs: this.config.healthTimeoutMs });
+      await this.bindWorld(world);
+      const receipt = this.store.reviewIssue(job.issueId);
+      if (!receipt || receipt.review?.resolvedAt) throw new Error('待审核项不存在或已经解决');
+      const guardItem = createGameItemGuard(this.codex);
+      const result = await this.codex.runTurn(this.threadId, buildReviewTurnPrompt(receipt), {
+        timeoutMs: this.config.turnTimeoutMs,
+        eventId: job.messageId,
+        onItem: (item, method) => {
+          try { guardItem(item, method); }
+          catch (error) { this.pause(error.message, error.code === 'SECURITY_VIOLATION'); throw error; }
+        },
+      });
+      for (const item of result.items) guardItem(item, 'item/completed');
+      const worldRead = result.items.some(item => item.type === 'mcpToolCall' && item.server === this.config.familiarServer &&
+        item.status === 'completed' && item.tool?.replaceAll('_', '-') === 'get-world-info');
+      if (!worldRead) throw new Error('审核 Turn 没有实际读取 Foundry 世界，不能把模型推测作为审核结论');
+      const answer = finalAgentAnswer(result.items, '审核 Turn');
+      await this.store.addReviewMessage(job.issueId, 'assistant', answer, { turnId: result.turn.id });
+      this.emit('change');
+      this.logger.info('review', '待审核项已收到 AI 答复', { id: job.issueId, turnId: result.turn.id });
+      return answer;
+    } catch (error) {
+      if (error.code === 'STORE_FAILURE') { this.fatal(error); throw error; }
+      const message = `本轮审核中断：${redact(error.message).slice(0, 1000)}。期间操作可能部分生效；恢复连接后请继续让 AI 从当前世界状态核对，不要直接重放。`;
+      await this.store.addReviewMessage(job.issueId, 'system', message)
+        .catch(storeError => { if (storeError.code === 'STORE_FAILURE') this.fatal(storeError); throw storeError; });
+      this.emit('change');
+      if (['TURN_TIMEOUT', 'SECURITY_VIOLATION'].includes(error.code)) this.pause(error.message, true);
+      else if (['DISCONNECTED', 'FAMILIAR_UNAVAILABLE', 'REQUEST_TIMEOUT'].includes(error.code) || this.codex.connection?.closed) this.pause(error.message);
+      throw error;
+    }
+  }
+
+  async setReviewResolved(id, resolved) {
+    if (typeof id !== 'string' || !id || typeof resolved !== 'boolean') throw new Error('审核状态无效');
+    try { await this.store.setReviewResolved(id, resolved); }
+    catch (error) { if (error.code === 'STORE_FAILURE') this.fatal(error); throw error; }
+    this.emit('change');
+  }
+
+  async requestGmMessage(text) {
+    if (typeof text !== 'string' || !text.trim() || text.length > 16000) throw new Error('GM 要求不能为空且不能超过 16000 字符');
+    if (this.stopping || !this.healthy || this.queue.paused) throw new Error('Bridge 就绪后才能使用 GM 控制台');
+    let message;
+    try { message = await this.store.addGmMessage('gm', text); }
+    catch (error) { if (error.code === 'STORE_FAILURE') this.fatal(error); throw error; }
+    this.emit('change');
+    try { return await this.queue.enqueue({ id: `gm:${message.id}`, kind: 'gm-console', messageId: message.id }); }
+    catch (error) {
+      if (this.store.gmMessages().at(-1)?.id === message.id) {
+        await this.store.addGmMessage('system', `GM 请求未进入执行阶段：${redact(error.message).slice(0, 1000)}。本轮没有调用 AI。`)
+          .catch(storeError => { if (storeError.code === 'STORE_FAILURE') this.fatal(storeError); throw storeError; });
+        this.emit('change');
+      }
+      throw error;
+    }
+  }
+
+  async processGmMessage(job) {
+    if (!this.healthy || this.stopping) throw new RetryLater('Bridge 尚未就绪');
+    try {
+      const { world } = await this.health(this.codex, this.threadId, { timeoutMs: this.config.healthTimeoutMs });
+      await this.bindWorld(world);
+      const guardItem = createGameItemGuard(this.codex);
+      const result = await this.codex.runTurn(this.threadId, buildGmConsolePrompt(this.store.gmMessages()), {
+        timeoutMs: this.config.turnTimeoutMs,
+        eventId: job.messageId,
+        onItem: (item, method) => {
+          try { guardItem(item, method); }
+          catch (error) { this.pause(error.message, error.code === 'SECURITY_VIOLATION'); throw error; }
+        },
+      });
+      for (const item of result.items) guardItem(item, 'item/completed');
+      const worldRead = result.items.some(item => item.type === 'mcpToolCall' && item.server === this.config.familiarServer &&
+        item.status === 'completed' && item.tool?.replaceAll('_', '-') === 'get-world-info');
+      if (!worldRead) throw new Error('GM 控制台 Turn 没有实际读取 Foundry 世界，不能把模型推测作为执行结果');
+      const answer = finalAgentAnswer(result.items, 'GM 控制台 Turn');
+      await this.store.addGmMessage('assistant', answer, { turnId: result.turn.id });
+      this.emit('change');
+      this.logger.info('gm', 'GM 控制台已收到 AI 答复', { turnId: result.turn.id });
+      return answer;
+    } catch (error) {
+      if (error.code === 'STORE_FAILURE') { this.fatal(error); throw error; }
+      const message = `本轮 GM 操作中断：${redact(error.message).slice(0, 1000)}。期间操作可能部分生效；恢复连接后请从当前世界状态继续核对，不要直接重放。`;
+      await this.store.addGmMessage('system', message)
+        .catch(storeError => { if (storeError.code === 'STORE_FAILURE') this.fatal(storeError); throw storeError; });
+      this.emit('change');
       if (['TURN_TIMEOUT', 'SECURITY_VIOLATION'].includes(error.code)) this.pause(error.message, true);
       else if (['DISCONNECTED', 'FAMILIAR_UNAVAILABLE', 'REQUEST_TIMEOUT'].includes(error.code) || this.codex.connection?.closed) this.pause(error.message);
       throw error;
@@ -210,7 +340,7 @@ export class Bridge extends EventEmitter {
       pauseReason: this.pauseReason,
       model: this.model ?? null, reasoningEffort: this.reasoningEffort ?? null,
       queued: state.queued.length, inFlight: state.inFlight?.event.id ?? null, lastProcessedMessageId: state.lastProcessedMessageId,
-      uncertain: state.receipts.filter(receipt => receipt.status === 'uncertain').length, restarts: this.restarts };
+      uncertain: pendingReviewCount(state), restarts: this.restarts };
   }
 
   async bindWorld(world) {
